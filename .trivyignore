@@ -1,0 +1,27 @@
+# Ignore warnings about cloudwatch log groups using customer-managed keys for encryption
+AVD-AWS-0017
+
+# DynamoDB
+AVD-AWS-0024
+AVD-AWS-0025
+
+# Ignore warnings about X-Ray tracing for Lambda functions
+AVD-AWS-0066
+
+# Ignore since S3 buckets block public access by default
+AVD-AWS-0086
+
+# Ignore since S3 buckets are encrypted by default
+AVD-AWS-0087
+AVD-AWS-0088
+AVD-AWS-0089
+AVD-AWS-0091
+AVD-AWS-0093
+AVD-AWS-0094
+AVD-AWS-0132
+
+# Ignore warnings about missing security group descriptions
+AVD-AWS-0124
+
+# Ignore warnings about encrypting SNS topics with KMS
+AVD-AWS-0136
