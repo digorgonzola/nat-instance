@@ -24,6 +24,8 @@ repos:
           - --hook-config=--parallelism-ci-cpu-cores=1
           - --args=--ignorefile=__GIT_WORKING_DIR__/.trivyignore
       - id: terraform_docs
+        stages:
+          - manual
         args:
           - --args=--config=.tfdocs-config.yml
           - --hook-config=--create-file-if-not-exist=true
