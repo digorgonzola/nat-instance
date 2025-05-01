@@ -18,7 +18,7 @@ The running instances can be accessed via SSM for debugging purposes.
 ```hcl
 module "squid_proxy" {
   source = "git@github.com:digorgonzola/squid_proxy.git?ref=v1.0.0"
-  
+
   private_subnet_ids = ["subnet-10a214dfcd63a97a4", "subnet-c727b18850685046b"]
   public_subnet_ids  = ["subnet-37f911e98a8616eee", "subnet-233bfad11fdd81dfd"]
   vpc_id             = "vpc-1eb7bfbe312f068e1"
