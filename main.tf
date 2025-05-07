@@ -1,9 +1,10 @@
 locals {
   name = "squid"
   userdata = templatefile("${path.module}/templates/cloud-init.tpl", {
-    architecture = local.architecture
-    aws_region   = data.aws_region.current.name
-    s3_bucket    = module.config_bucket.s3_bucket_id
+    architecture      = local.architecture
+    aws_region        = data.aws_region.current.name
+    eip_allocation_id = var.enable_eip ? aws_eip.squid[0].id : ""
+    s3_bucket         = module.config_bucket.s3_bucket_id
   })
 }
 
@@ -87,11 +88,27 @@ data "aws_iam_policy_document" "instance" {
   statement {
     sid = "EC2"
     actions = [
+      "ec2:DescribeInstances",
       "ec2:ModifyInstanceAttribute",
     ]
     resources = [
       "arn:aws:ec2:${data.aws_region.current.name}:${data.aws_caller_identity.this.account_id}:instance/*"
     ]
+  }
+
+  dynamic "statement" {
+    for_each = var.enable_eip ? ["true"] : []
+    content {
+      sid = "DescribeEIP"
+      actions = [
+        "ec2:AssociateAddress",
+        "ec2:DescribeAddresses",
+      ]
+      resources = [
+        "arn:aws:ec2:${data.aws_region.current.name}:${data.aws_caller_identity.this.account_id}:elastic-ip/*",
+        "arn:aws:ec2:${data.aws_region.current.name}:${data.aws_caller_identity.this.account_id}:network-interface/*",
+      ]
+    }
   }
 
   statement {
@@ -108,6 +125,7 @@ data "aws_iam_policy_document" "instance" {
       ]),
     ]
   }
+
   statement {
     sid = "S3"
     actions = [
@@ -196,6 +214,14 @@ resource "aws_launch_template" "squid" {
   }
 }
 
+resource "aws_eip" "squid" {
+  count = var.enable_eip ? 1 : 0
+
+  tags = {
+    Name = "${local.name}-eip"
+  }
+}
+
 resource "aws_autoscaling_group" "squid" {
   name                      = "${local.name}-asg"
   max_size                  = 1
@@ -248,6 +274,7 @@ resource "aws_autoscaling_group" "squid" {
     module.whitelist,
     aws_cloudwatch_log_group.access,
     aws_cloudwatch_log_group.cache,
+    aws_eip.squid,
     aws_lambda_function.squid,
     aws_iam_role_policy_attachment.cloudwatch,
     aws_iam_role_policy_attachment.custom,

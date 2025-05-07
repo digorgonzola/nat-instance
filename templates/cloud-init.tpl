@@ -16,6 +16,28 @@ write_files:
       instanceid=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" -s http://169.254.169.254/latest/meta-data/instance-id)
       aws ec2 modify-instance-attribute --no-source-dest-check --instance-id $instanceid --region $region
 
+      # Associate the Elastic IP with this instance if an allocation ID is provided
+      if [ -n "${eip_allocation_id}" ]; then
+        interface_id=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" -s \
+          http://169.254.169.254/latest/meta-data/network/interfaces/macs/ | head -n1)
+
+        eni_id=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" -s \
+          http://169.254.169.254/latest/meta-data/network/interfaces/macs/$${interface_id}interface-id)
+
+        private_ip=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" -s \
+          http://169.254.169.254/latest/meta-data/network/interfaces/macs/$${interface_id}local-ipv4s)
+
+          echo "EIP: ${eip_allocation_id}"
+          echo "ENI: $eni_id"
+          echo "Private IP: $private_ip"
+
+        aws ec2 associate-address \
+          --allocation-id "${eip_allocation_id}" \
+          --network-interface-id "$eni_id" \
+          --private-ip-address "$private_ip" \
+          --region "$region"
+      fi
+
       #Install iptables and cron
       yum install cronie -y
       systemctl enable crond.service
