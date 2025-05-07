@@ -7,6 +7,12 @@ variable "allowed_domains" {
   ]
 }
 
+variable "enable_eip" {
+  description = "Whether or not to enable a consistent elastic IP for the EC2 instances."
+  type        = bool
+  default     = false
+}
+
 variable "instance_type" {
   description = "The instance type to use for the ASG."
   type        = string

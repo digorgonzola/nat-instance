@@ -19,6 +19,11 @@ The running instances can be accessed via SSM for debugging purposes.
 module "squid_proxy" {
   source = "git@github.com:digorgonzola/squid_proxy.git?ref=v1.0.0"
 
+  allowed_domains = [
+    ".amazonaws.com",
+    "api.sendgrid.com",
+  ]
+  enable_eip         = true
   private_subnet_ids = ["subnet-10a214dfcd63a97a4", "subnet-c727b18850685046b"]
   public_subnet_ids  = ["subnet-37f911e98a8616eee", "subnet-233bfad11fdd81dfd"]
   vpc_id             = "vpc-1eb7bfbe312f068e1"
@@ -38,6 +43,7 @@ module "squid_proxy" {
 |------|-------------|------|---------|:--------:|
 | <a name="input_allowed_domains"></a> [allowed\_domains](#input\_allowed\_domains) | List of allowed domains. | `list(string)` | <pre>[<br/>  ".amazonaws.com",<br/>  ".amazon.com"<br/>]</pre> | no |
 | <a name="input_detailed_monitoring"></a> [detailed\_monitoring](#input\_detailed\_monitoring) | Whether or not to enable detailed monitoring for the EC2 instance. | `bool` | `false` | no |
+| <a name="input_enable_eip"></a> [enable\_eip](#input\_enable\_eip) | Whether or not to enable a consistent elastic IP for the EC2 instances. | `bool` | `false` | no |
 | <a name="input_instance_type"></a> [instance\_type](#input\_instance\_type) | The instance type to use for the ASG. | `string` | `"t4g.small"` | no |
 | <a name="input_private_subnet_ids"></a> [private\_subnet\_ids](#input\_private\_subnet\_ids) | List of private subnet ID's in the VPC. | `list(string)` | n/a | yes |
 | <a name="input_public_subnet_ids"></a> [public\_subnet\_ids](#input\_public\_subnet\_ids) | List of public subnet ID's to deploy the ASG to. | `list(string)` | n/a | yes |
@@ -75,6 +81,7 @@ No outputs.
 | [aws_cloudwatch_log_group.cache](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_log_group) | resource |
 | [aws_cloudwatch_log_group.lambda](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_log_group) | resource |
 | [aws_cloudwatch_metric_alarm.squid](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_metric_alarm) | resource |
+| [aws_eip.squid](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/eip) | resource |
 | [aws_iam_instance_profile.instance](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_instance_profile) | resource |
 | [aws_iam_policy.instance](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_policy) | resource |
 | [aws_iam_policy.lambda](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_policy) | resource |
