@@ -1,10 +1,12 @@
 locals {
-  name = "squid"
+  name                = "squid"
+  lifecycle_hook_name = "${local.name}-hook"
   userdata = templatefile("${path.module}/templates/cloud-init.tpl", {
-    architecture      = local.architecture
-    aws_region        = data.aws_region.current.name
-    eip_allocation_id = var.enable_eip ? aws_eip.squid[0].id : ""
-    s3_bucket         = module.config_bucket.s3_bucket_id
+    architecture        = local.architecture
+    aws_region          = data.aws_region.current.name
+    eip_allocation_id   = var.enable_eip ? aws_eip.squid[0].id : ""
+    lifecycle_hook_name = local.lifecycle_hook_name
+    s3_bucket           = module.config_bucket.s3_bucket_id
   })
 }
 
@@ -232,7 +234,7 @@ resource "aws_autoscaling_group" "squid" {
   vpc_zone_identifier       = var.public_subnet_ids
 
   initial_lifecycle_hook {
-    name                    = "squid-asg-hook"
+    name                    = local.lifecycle_hook_name
     lifecycle_transition    = "autoscaling:EC2_INSTANCE_LAUNCHING"
     heartbeat_timeout       = 300
     default_result          = "ABANDON"

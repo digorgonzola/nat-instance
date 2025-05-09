@@ -35,6 +35,7 @@ write_files:
           --allocation-id "${eip_allocation_id}" \
           --network-interface-id "$eni_id" \
           --private-ip-address "$private_ip" \
+          --allow-reassociation \
           --region "$region"
       fi
 
@@ -144,7 +145,7 @@ write_files:
 
       # Complete the lifecycle action
       aws autoscaling complete-lifecycle-action \
-        --lifecycle-hook-name squid-asg-hook \
+        --lifecycle-hook-name "${lifecycle_hook_name}" \
         --auto-scaling-group-name "$asg_name" \
         --lifecycle-action-result CONTINUE \
         --instance-id "$instanceid" \
