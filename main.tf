@@ -268,7 +268,7 @@ resource "aws_autoscaling_group" "squid" {
   tag {
     key                 = "RouteTableIds"
     propagate_at_launch = false
-    value               = join(",", data.aws_route_table.private[*].id)
+    value               = join(",", distinct(data.aws_route_table.private[*].id))
   }
 
   depends_on = [
