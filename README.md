@@ -17,7 +17,7 @@ The running instances can be accessed via SSM for debugging purposes.
 
 ```hcl
 module "squid_proxy" {
-  source = "git@github.com:digorgonzola/squid_proxy.git?ref=v1.0.0"
+  source = "git@github.com:<org>/squid-proxy.git?ref=v1.0.0"
 
   allowed_domains = [
     ".amazonaws.com",
