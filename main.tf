@@ -1,5 +1,5 @@
 locals {
-  name                = "squid"
+  name                = var.name
   lifecycle_hook_name = "${local.name}-hook"
   userdata = templatefile("${path.module}/templates/cloud-init.tpl", {
     architecture        = local.architecture

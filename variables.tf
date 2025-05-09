@@ -7,6 +7,12 @@ variable "allowed_domains" {
   ]
 }
 
+variable "detailed_monitoring" {
+  description = "Whether or not to enable detailed monitoring for the EC2 instance."
+  type        = bool
+  default     = false
+}
+
 variable "enable_eip" {
   description = "Whether or not to enable a consistent elastic IP for the EC2 instances."
   type        = bool
@@ -19,10 +25,10 @@ variable "instance_type" {
   default     = "t4g.small"
 }
 
-variable "detailed_monitoring" {
-  description = "Whether or not to enable detailed monitoring for the EC2 instance."
-  type        = bool
-  default     = false
+variable "name" {
+  description = "The name to use for resources."
+  type        = string
+  default     = "squid"
 }
 
 variable "private_subnet_ids" {
