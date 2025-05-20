@@ -170,5 +170,6 @@ resource "aws_lambda_function" "squid" {
 
 # Dead letter queue for failed events
 resource "aws_sqs_queue" "dlq" {
-  name = "${local.name}-lambda-dlq"
+  name                    = "${local.name}-lambda-dlq"
+  sqs_managed_sse_enabled = true
 }
