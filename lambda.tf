@@ -149,6 +149,7 @@ data "archive_file" "lambda_source_code" {
 # Lambda function
 resource "aws_lambda_function" "squid" {
   function_name = "${local.name}-lambda"
+  architectures = var.architectures
   role          = aws_iam_role.lambda.arn
   handler       = "lambda_function.lambda_handler"
   runtime       = "python3.13"

@@ -7,6 +7,12 @@ variable "allowed_domains" {
   ]
 }
 
+variable "architectures" {
+  description = "Lambda function architecture."
+  type        = list(string)
+  default     = ["arm64"]
+}
+
 variable "detailed_monitoring" {
   description = "Whether or not to enable detailed monitoring for the EC2 instance."
   type        = bool
