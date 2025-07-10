@@ -1,4 +1,4 @@
-variable "allowed_domains" {
+variable "allowed_web_domains" {
   description = "List of allowed domains."
   type        = list(string)
   default = [
@@ -17,6 +17,30 @@ variable "detailed_monitoring" {
   description = "Whether or not to enable detailed monitoring for the EC2 instance."
   type        = bool
   default     = false
+}
+
+variable "additional_egress_rules" {
+  description = "Additional egress rules to apply to the security group."
+  type = map(object({
+    cidr_ipv4   = string
+    description = optional(string, null)
+    ip_protocol = string
+    from_port   = number
+    to_port     = number
+  }))
+  default = null
+}
+
+variable "additional_ingress_rules" {
+  description = "Additional ingress rules to apply to the security group."
+  type = map(object({
+    cidr_ipv4   = string
+    description = optional(string, null)
+    ip_protocol = string
+    from_port   = number
+    to_port     = number
+  }))
+  default = null
 }
 
 variable "enable_eip" {
