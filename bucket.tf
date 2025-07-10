@@ -5,7 +5,7 @@ locals {
 
 module "config_bucket" {
   source  = "terraform-aws-modules/s3-bucket/aws"
-  version = "~> 4.0"
+  version = "~> 5.0"
   bucket  = "${local.name}-config"
   server_side_encryption_configuration = {
     rule = {
@@ -24,7 +24,7 @@ module "config_bucket" {
 
 module "squid_config" {
   source  = "terraform-aws-modules/s3-bucket/aws//modules/object"
-  version = "~> 4.0"
+  version = "~> 5.0"
 
   bucket      = module.config_bucket.s3_bucket_id
   key         = "squid.conf"
@@ -34,7 +34,7 @@ module "squid_config" {
 
 module "whitelist" {
   source  = "terraform-aws-modules/s3-bucket/aws//modules/object"
-  version = "~> 4.0"
+  version = "~> 5.0"
 
   bucket      = module.config_bucket.s3_bucket_id
   key         = "whitelist.txt"
