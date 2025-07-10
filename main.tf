@@ -3,7 +3,7 @@ locals {
   lifecycle_hook_name = "${local.name}-hook"
   userdata = templatefile("${path.module}/templates/cloud-init.tpl", {
     architecture        = local.architecture
-    aws_region          = data.aws_region.current.name
+    aws_region          = data.aws_region.current.region
     eip_allocation_id   = var.enable_eip ? aws_eip.squid[0].id : ""
     lifecycle_hook_name = local.lifecycle_hook_name
     s3_bucket           = module.config_bucket.s3_bucket_id
@@ -94,7 +94,7 @@ data "aws_iam_policy_document" "instance" {
       "ec2:ModifyInstanceAttribute",
     ]
     resources = [
-      "arn:aws:ec2:${data.aws_region.current.name}:${data.aws_caller_identity.this.account_id}:instance/*"
+      "arn:aws:ec2:${data.aws_region.current.region}:${data.aws_caller_identity.this.account_id}:instance/*"
     ]
   }
 
@@ -107,8 +107,8 @@ data "aws_iam_policy_document" "instance" {
         "ec2:DescribeAddresses",
       ]
       resources = [
-        "arn:aws:ec2:${data.aws_region.current.name}:${data.aws_caller_identity.this.account_id}:elastic-ip/*",
-        "arn:aws:ec2:${data.aws_region.current.name}:${data.aws_caller_identity.this.account_id}:network-interface/*",
+        "arn:aws:ec2:${data.aws_region.current.region}:${data.aws_caller_identity.this.account_id}:elastic-ip/*",
+        "arn:aws:ec2:${data.aws_region.current.region}:${data.aws_caller_identity.this.account_id}:network-interface/*",
       ]
     }
   }
@@ -121,7 +121,7 @@ data "aws_iam_policy_document" "instance" {
     resources = [
       join(":", [
         "arn:aws:autoscaling",
-        data.aws_region.current.name,
+        data.aws_region.current.region,
         data.aws_caller_identity.this.account_id,
         "autoScalingGroup:*:autoScalingGroupName/${local.name}-asg",
       ]),

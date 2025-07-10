@@ -72,7 +72,7 @@ data "aws_iam_policy_document" "lambda" {
     resources = [
       join(":", [
         "arn:aws:autoscaling",
-        data.aws_region.current.name,
+        data.aws_region.current.region,
         data.aws_caller_identity.this.account_id,
         "autoScalingGroup:*:autoScalingGroupName/${local.name}-asg",
       ]),
@@ -85,7 +85,7 @@ data "aws_iam_policy_document" "lambda" {
       "cloudwatch:Describe*",
     ]
     resources = [
-      "arn:aws:cloudwatch:${data.aws_region.current.name}:${data.aws_caller_identity.this.account_id}:alarm:${local.name}-alarm",
+      "arn:aws:cloudwatch:${data.aws_region.current.region}:${data.aws_caller_identity.this.account_id}:alarm:${local.name}-alarm",
     ]
   }
 
