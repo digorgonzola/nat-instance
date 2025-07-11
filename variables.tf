@@ -1,4 +1,4 @@
-variable "allowed_domains" {
+variable "allowed_web_domains" {
   description = "List of allowed domains."
   type        = list(string)
   default = [
@@ -19,6 +19,30 @@ variable "detailed_monitoring" {
   default     = false
 }
 
+variable "additional_egress_rules" {
+  description = "Additional egress rules to apply to the security group."
+  type = map(object({
+    cidr_ipv4   = string
+    description = optional(string, null)
+    ip_protocol = string
+    from_port   = number
+    to_port     = number
+  }))
+  default = null
+}
+
+variable "additional_ingress_rules" {
+  description = "Additional ingress rules to apply to the security group."
+  type = map(object({
+    cidr_ipv4   = string
+    description = optional(string, null)
+    ip_protocol = string
+    from_port   = number
+    to_port     = number
+  }))
+  default = null
+}
+
 variable "enable_eip" {
   description = "Whether or not to enable a consistent elastic IP for the EC2 instances."
   type        = bool
@@ -34,7 +58,7 @@ variable "instance_type" {
 variable "name" {
   description = "The name to use for resources."
   type        = string
-  default     = "squid"
+  default     = "nat"
 }
 
 variable "private_subnet_ids" {
@@ -48,6 +72,6 @@ variable "public_subnet_ids" {
 }
 
 variable "vpc_id" {
-  description = "The ID of the VPC to deploy the squid proxy to."
+  description = "The ID of the VPC to deploy the NAT instance/squid proxy to."
   type        = string
 }

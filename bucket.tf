@@ -1,11 +1,11 @@
 locals {
   squid_config = file("${path.module}/config_files/squid.conf")
-  whitelist    = join("\n", var.allowed_domains)
+  whitelist    = join("\n", var.allowed_web_domains)
 }
 
 module "config_bucket" {
   source  = "terraform-aws-modules/s3-bucket/aws"
-  version = "~> 4.0"
+  version = "~> 5.0"
   bucket  = "${local.name}-config"
   server_side_encryption_configuration = {
     rule = {
@@ -24,7 +24,7 @@ module "config_bucket" {
 
 module "squid_config" {
   source  = "terraform-aws-modules/s3-bucket/aws//modules/object"
-  version = "~> 4.0"
+  version = "~> 5.0"
 
   bucket      = module.config_bucket.s3_bucket_id
   key         = "squid.conf"
@@ -34,7 +34,7 @@ module "squid_config" {
 
 module "whitelist" {
   source  = "terraform-aws-modules/s3-bucket/aws//modules/object"
-  version = "~> 4.0"
+  version = "~> 5.0"
 
   bucket      = module.config_bucket.s3_bucket_id
   key         = "whitelist.txt"
@@ -46,7 +46,7 @@ module "whitelist" {
 resource "aws_lambda_permission" "s3_trigger" {
   statement_id  = "AllowExecutionFromS3Bucket"
   action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.squid.function_name
+  function_name = aws_lambda_function.nat.function_name
   principal     = "s3.amazonaws.com"
   source_arn    = module.config_bucket.s3_bucket_arn
 }
@@ -55,7 +55,7 @@ resource "aws_s3_bucket_notification" "bucket_notification" {
   bucket = module.config_bucket.s3_bucket_id
 
   lambda_function {
-    lambda_function_arn = aws_lambda_function.squid.arn
+    lambda_function_arn = aws_lambda_function.nat.arn
     events = [
       "s3:ObjectCreated:*",
     ]

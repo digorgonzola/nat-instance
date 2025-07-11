@@ -1,57 +1,60 @@
 locals {
   name                = var.name
   lifecycle_hook_name = "${local.name}-hook"
+  default_egress_rules = {
+    egress_http = {
+      cidr_ipv4   = "0.0.0.0/0"
+      description = "Allow outbound HTTP traffic."
+      ip_protocol = "tcp"
+      from_port   = 80
+      to_port     = 80
+    },
+    egress_https = {
+      cidr_ipv4   = "0.0.0.0/0"
+      description = "Allow outbound HTTPS traffic."
+      ip_protocol = "tcp"
+      from_port   = 443
+      to_port     = 443
+    },
+  }
+  default_ingress_rules = {
+    ingress_all = {
+      cidr_ipv4   = "0.0.0.0/0"
+      description = "Allow all inbound traffic."
+      ip_protocol = "-1"
+      from_port   = -1
+      to_port     = -1
+    }
+  }
   userdata = templatefile("${path.module}/templates/cloud-init.tpl", {
     architecture        = local.architecture
-    aws_region          = data.aws_region.current.name
-    eip_allocation_id   = var.enable_eip ? aws_eip.squid[0].id : ""
+    aws_region          = data.aws_region.current.region
+    eip_allocation_id   = var.enable_eip ? aws_eip.nat[0].id : ""
     lifecycle_hook_name = local.lifecycle_hook_name
     s3_bucket           = module.config_bucket.s3_bucket_id
+    vpc_cidr_block      = data.aws_vpc.this.cidr_block
   })
 }
 
 resource "aws_cloudwatch_log_group" "access" {
-  name              = "/squid-proxy/access.log"
+  name              = "/nat-instance/access.log"
   retention_in_days = 14
 }
 
 resource "aws_cloudwatch_log_group" "cache" {
-  name              = "/squid-proxy/cache.log"
+  name              = "/nat-instance/cache.log"
+  retention_in_days = 14
+}
+
+resource "aws_cloudwatch_log_group" "iptables" {
+  name              = "/nat-instance/iptables.log"
   retention_in_days = 14
 }
 
 resource "aws_security_group" "instance" {
   name        = "${local.name}-instance-sg"
-  description = "Security group for Squid proxy instances."
+  description = "Security group for NAT instance/squid proxy instances."
   vpc_id      = data.aws_vpc.this.id
-
-  ingress {
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = [data.aws_vpc.this.cidr_block]
-  }
-
-  ingress {
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = [data.aws_vpc.this.cidr_block]
-  }
-
-  egress {
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  egress {
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
 
   tags = {
     Name = "${local.name}-instance-sg"
@@ -60,6 +63,26 @@ resource "aws_security_group" "instance" {
   lifecycle {
     create_before_destroy = true
   }
+}
+
+resource "aws_vpc_security_group_egress_rule" "this" {
+  for_each          = merge(local.default_egress_rules, var.additional_egress_rules)
+  cidr_ipv4         = each.value.cidr_ipv4
+  description       = each.value.description
+  from_port         = each.value.from_port
+  ip_protocol       = each.value.ip_protocol
+  security_group_id = aws_security_group.instance.id
+  to_port           = each.value.to_port
+}
+
+resource "aws_vpc_security_group_ingress_rule" "this" {
+  for_each          = merge(local.default_ingress_rules, var.additional_ingress_rules)
+  cidr_ipv4         = each.value.cidr_ipv4
+  description       = each.value.description
+  from_port         = each.value.from_port
+  ip_protocol       = each.value.ip_protocol
+  security_group_id = aws_security_group.instance.id
+  to_port           = each.value.to_port
 }
 
 resource "aws_iam_role" "instance" {
@@ -79,10 +102,10 @@ resource "aws_iam_role" "instance" {
   })
 }
 
-# Custom IAM policy for the Squid instances
+# Custom IAM policy for the NAT instance/squid instance
 resource "aws_iam_policy" "instance" {
   name        = "${local.name}-instance-policy"
-  description = "Policy for the Squid proxy instances."
+  description = "Policy for the NAT instance/squid proxy instances."
   policy      = data.aws_iam_policy_document.instance.json
 }
 
@@ -94,7 +117,7 @@ data "aws_iam_policy_document" "instance" {
       "ec2:ModifyInstanceAttribute",
     ]
     resources = [
-      "arn:aws:ec2:${data.aws_region.current.name}:${data.aws_caller_identity.this.account_id}:instance/*"
+      "arn:aws:ec2:${data.aws_region.current.region}:${data.aws_caller_identity.this.account_id}:instance/*"
     ]
   }
 
@@ -107,8 +130,8 @@ data "aws_iam_policy_document" "instance" {
         "ec2:DescribeAddresses",
       ]
       resources = [
-        "arn:aws:ec2:${data.aws_region.current.name}:${data.aws_caller_identity.this.account_id}:elastic-ip/*",
-        "arn:aws:ec2:${data.aws_region.current.name}:${data.aws_caller_identity.this.account_id}:network-interface/*",
+        "arn:aws:ec2:${data.aws_region.current.region}:${data.aws_caller_identity.this.account_id}:elastic-ip/*",
+        "arn:aws:ec2:${data.aws_region.current.region}:${data.aws_caller_identity.this.account_id}:network-interface/*",
       ]
     }
   }
@@ -121,7 +144,7 @@ data "aws_iam_policy_document" "instance" {
     resources = [
       join(":", [
         "arn:aws:autoscaling",
-        data.aws_region.current.name,
+        data.aws_region.current.region,
         data.aws_caller_identity.this.account_id,
         "autoScalingGroup:*:autoScalingGroupName/${local.name}-asg",
       ]),
@@ -163,7 +186,7 @@ resource "aws_iam_instance_profile" "instance" {
   role = aws_iam_role.instance.name
 }
 
-resource "aws_launch_template" "squid" {
+resource "aws_launch_template" "nat" {
   name          = "${local.name}-launchtemplate"
   image_id      = data.aws_ami.amazon_linux_2.id
   instance_type = var.instance_type
@@ -216,7 +239,7 @@ resource "aws_launch_template" "squid" {
   }
 }
 
-resource "aws_eip" "squid" {
+resource "aws_eip" "nat" {
   count = var.enable_eip ? 1 : 0
 
   tags = {
@@ -224,7 +247,7 @@ resource "aws_eip" "squid" {
   }
 }
 
-resource "aws_autoscaling_group" "squid" {
+resource "aws_autoscaling_group" "nat" {
   name                      = "${local.name}-asg"
   max_size                  = 1
   min_size                  = 1
@@ -255,8 +278,8 @@ resource "aws_autoscaling_group" "squid" {
   }
 
   launch_template {
-    id      = aws_launch_template.squid.id
-    version = aws_launch_template.squid.latest_version
+    id      = aws_launch_template.nat.id
+    version = aws_launch_template.nat.latest_version
   }
 
   tag {
@@ -276,8 +299,9 @@ resource "aws_autoscaling_group" "squid" {
     module.whitelist,
     aws_cloudwatch_log_group.access,
     aws_cloudwatch_log_group.cache,
-    aws_eip.squid,
-    aws_lambda_function.squid,
+    aws_cloudwatch_log_group.iptables,
+    aws_eip.nat,
+    aws_lambda_function.nat,
     aws_iam_role_policy_attachment.cloudwatch,
     aws_iam_role_policy_attachment.custom,
     aws_iam_role_policy_attachment.ssm,
@@ -328,5 +352,5 @@ resource "aws_sns_topic" "asg_lifecycle" {
 resource "aws_sns_topic_subscription" "lambda_sub" {
   topic_arn = aws_sns_topic.asg_lifecycle.arn
   protocol  = "lambda"
-  endpoint  = aws_lambda_function.squid.arn
+  endpoint  = aws_lambda_function.nat.arn
 }

@@ -1,6 +1,6 @@
 # Cloud watch alarm to trigger the lambda function if the squid process stops
 resource "aws_cloudwatch_metric_alarm" "squid" {
-  alarm_name          = "${local.name}-alarm"
+  alarm_name          = "${local.name}-squid-alarm"
   comparison_operator = "LessThanThreshold"
   evaluation_periods  = 2
   metric_name         = "procstat_lookup_pid_count"
@@ -10,7 +10,7 @@ resource "aws_cloudwatch_metric_alarm" "squid" {
   threshold           = 1.0
   treat_missing_data  = "breaching"
   dimensions = {
-    AutoScalingGroupName = aws_autoscaling_group.squid.name
+    AutoScalingGroupName = aws_autoscaling_group.nat.name
     pattern              = "/usr/sbin/squid"
     pid_finder           = "native"
   }
@@ -28,5 +28,5 @@ resource "aws_sns_topic" "alarm" {
 resource "aws_sns_topic_subscription" "lambda" {
   topic_arn = aws_sns_topic.alarm.arn
   protocol  = "lambda"
-  endpoint  = aws_lambda_function.squid.arn
+  endpoint  = aws_lambda_function.nat.arn
 }
