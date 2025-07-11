@@ -1,12 +1,38 @@
 locals {
   name                = var.name
   lifecycle_hook_name = "${local.name}-hook"
+  default_egress_rules = {
+    egress_http = {
+      cidr_ipv4   = "0.0.0.0/0"
+      description = "Allow outbound HTTP traffic."
+      ip_protocol = "tcp"
+      from_port   = 80
+      to_port     = 80
+    },
+    egress_https = {
+      cidr_ipv4   = "0.0.0.0/0"
+      description = "Allow outbound HTTPS traffic."
+      ip_protocol = "tcp"
+      from_port   = 443
+      to_port     = 443
+    },
+  }
+  default_ingress_rules = {
+    ingress_all = {
+      cidr_ipv4   = "0.0.0.0/0"
+      description = "Allow all inbound traffic."
+      ip_protocol = "-1"
+      from_port   = -1
+      to_port     = -1
+    }
+  }
   userdata = templatefile("${path.module}/templates/cloud-init.tpl", {
     architecture        = local.architecture
     aws_region          = data.aws_region.current.region
     eip_allocation_id   = var.enable_eip ? aws_eip.squid[0].id : ""
     lifecycle_hook_name = local.lifecycle_hook_name
     s3_bucket           = module.config_bucket.s3_bucket_id
+    vpc_cidr_block      = data.aws_vpc.this.cidr_block
   })
 }
 
@@ -20,38 +46,15 @@ resource "aws_cloudwatch_log_group" "cache" {
   retention_in_days = 14
 }
 
+resource "aws_cloudwatch_log_group" "iptables" {
+  name              = "/squid-proxy/iptables.log"
+  retention_in_days = 14
+}
+
 resource "aws_security_group" "instance" {
   name        = "${local.name}-instance-sg"
   description = "Security group for Squid proxy instances."
   vpc_id      = data.aws_vpc.this.id
-
-  ingress {
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = [data.aws_vpc.this.cidr_block]
-  }
-
-  ingress {
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = [data.aws_vpc.this.cidr_block]
-  }
-
-  egress {
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  egress {
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
 
   tags = {
     Name = "${local.name}-instance-sg"
@@ -60,6 +63,26 @@ resource "aws_security_group" "instance" {
   lifecycle {
     create_before_destroy = true
   }
+}
+
+resource "aws_vpc_security_group_egress_rule" "this" {
+  for_each          = merge(local.default_egress_rules, var.additional_egress_rules)
+  cidr_ipv4         = each.value.cidr_ipv4
+  description       = each.value.description
+  from_port         = each.value.from_port
+  ip_protocol       = each.value.ip_protocol
+  security_group_id = aws_security_group.instance.id
+  to_port           = each.value.to_port
+}
+
+resource "aws_vpc_security_group_ingress_rule" "this" {
+  for_each          = merge(local.default_ingress_rules, var.additional_ingress_rules)
+  cidr_ipv4         = each.value.cidr_ipv4
+  description       = each.value.description
+  from_port         = each.value.from_port
+  ip_protocol       = each.value.ip_protocol
+  security_group_id = aws_security_group.instance.id
+  to_port           = each.value.to_port
 }
 
 resource "aws_iam_role" "instance" {
@@ -276,6 +299,7 @@ resource "aws_autoscaling_group" "squid" {
     module.whitelist,
     aws_cloudwatch_log_group.access,
     aws_cloudwatch_log_group.cache,
+    aws_cloudwatch_log_group.iptables,
     aws_eip.squid,
     aws_lambda_function.squid,
     aws_iam_role_policy_attachment.cloudwatch,
