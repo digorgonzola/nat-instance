@@ -190,6 +190,12 @@ write_files:
                 "measurement": [
                   "pid_count"
                 ]
+              },
+              {
+                "pattern": "/usr/sbin/iptables",
+                "measurement": [
+                  "pid_count"
+                ]
               }
             ]
           },
