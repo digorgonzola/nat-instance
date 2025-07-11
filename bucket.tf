@@ -1,6 +1,6 @@
 locals {
   squid_config = file("${path.module}/config_files/squid.conf")
-  whitelist    = join("\n", var.allowed_domains)
+  whitelist    = join("\n", var.allowed_web_domains)
 }
 
 module "config_bucket" {
