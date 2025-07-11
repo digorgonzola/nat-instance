@@ -1,5 +1,27 @@
 #cloud-config
 write_files:
+  - path: /etc/rsyslog.d/10-iptables.conf
+    permissions: '0644'
+    content: |
+      # Log iptables messages to a separate file
+      :msg, contains, "IPTABLES" /var/log/iptables.log
+      & stop
+  - path: /etc/logrotate.d/iptables
+    permissions: '0644'
+    content: |
+      /var/log/iptables.log {
+          weekly
+          rotate 5
+          compress
+          delaycompress
+          notifempty
+          missingok
+          nocreate
+          sharedscripts
+          postrotate
+              /usr/bin/systemctl reload rsyslog.service > /dev/null 2>&1 || true
+          endscript
+      }
   - path: /root/startup.sh
     permissions: '0755'
     content: |
@@ -9,6 +31,10 @@ write_files:
 
       # Apply the latest security patches
       yum update -y --security
+
+      # Enable IP forwarding
+      echo 'net.ipv4.ip_forward = 1' >> /etc/sysctl.conf
+      sysctl -p
 
       # Disable source / destination check. It cannot be disabled from the launch configuration
       region=${aws_region}
@@ -51,12 +77,69 @@ write_files:
       # Install and start Squid
       yum install -y squid
       systemctl enable squid
+
+      # Install and start rsyslog-ng
+      yum install -y rsyslog
+      systemctl enable rsyslog
+      systemctl start rsyslog
+
+      # Configure iptables for both proxy and NAT gateway functionality
       iptables -F
-      iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 3129
-      iptables -t nat -A PREROUTING -p tcp --dport 443 -j REDIRECT --to-port 3130
+      iptables -t nat -F
+      iptables -t mangle -F
+
+      # Set default policies
+      iptables -P INPUT ACCEPT
+      iptables -P FORWARD ACCEPT
+      iptables -P OUTPUT ACCEPT
+
+      # Allow loopback traffic
+      iptables -A INPUT -i lo -j ACCEPT
+      iptables -A OUTPUT -o lo -j ACCEPT
+
+      # Allow established and related connections
+      iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+      iptables -A FORWARD -m state --state ESTABLISHED,RELATED -j ACCEPT
+
+      # Get the internet-facing interface name
+      INTERNET_INTERFACE=$(ip route | grep default | awk '{print $5}' | head -1)
+
+      # Allow SSH access (port 22)
+      iptables -A INPUT -p tcp --dport 22 -j ACCEPT
+
+      # Allow Squid proxy ports
+      iptables -A INPUT -p tcp --dport 3128 -j ACCEPT
+      iptables -A INPUT -p tcp --dport 3129 -j ACCEPT
+      iptables -A INPUT -p tcp --dport 3130 -j ACCEPT
+
+      # Log and redirect HTTP traffic to Squid (only for traffic not from local machine)
+      iptables -t nat -A PREROUTING -p tcp --dport 80 ! -s 127.0.0.1 -j LOG --log-prefix "IPTABLES HTTP-REDIRECT: " --log-level 4
+      iptables -t nat -A PREROUTING -p tcp --dport 80 ! -s 127.0.0.1 -j REDIRECT --to-port 3129
+
+      # Log and redirect HTTPS traffic to Squid (only for traffic not from local machine)
+      iptables -t nat -A PREROUTING -p tcp --dport 443 ! -s 127.0.0.1 -j LOG --log-prefix "IPTABLES HTTPS-REDIRECT: " --log-level 4
+      iptables -t nat -A PREROUTING -p tcp --dport 443 ! -s 127.0.0.1 -j REDIRECT --to-port 3130
+
+      # Log NAT traffic going out to the internet (sample only some traffic to avoid log spam)
+      iptables -t nat -A POSTROUTING -o $INTERNET_INTERFACE -m limit --limit 10/minute -j LOG --log-prefix "IPTABLES NAT-OUT: " --log-level 4
+      iptables -t nat -A POSTROUTING -o $INTERNET_INTERFACE -j MASQUERADE
+
+      # Log forwarded traffic from private networks (with rate limiting)
+      iptables -A FORWARD -s ${vpc_cidr_block} -m limit --limit 20/minute -j LOG --log-prefix "IPTABLES FORWARD-VPC: " --log-level 4
+      iptables -A FORWARD -s ${vpc_cidr_block} -j ACCEPT
+
+      # Allow forwarding for established connections
+      iptables -A FORWARD -m state --state ESTABLISHED,RELATED -j ACCEPT
+
+      # Log dropped packets (useful for debugging)
+      iptables -A INPUT -m limit --limit 5/minute -j LOG --log-prefix "IPTABLES INPUT-DROP: " --log-level 4
+      iptables -A FORWARD -m limit --limit 5/minute -j LOG --log-prefix "IPTABLES FORWARD-DROP: " --log-level 4
+
+      # Save iptables rules
+      service iptables save
 
       # Create a SSL certificate for the SslBump Squid module
-      mkdir /etc/squid/ssl
+      mkdir -p /etc/squid/ssl
       cd /etc/squid/ssl
       openssl genrsa -out squid.key 4096
       openssl req -new -key squid.key -out squid.csr -subj "/C=XX/ST=XX/L=squid/O=squid/CN=squid"
@@ -130,6 +213,12 @@ write_files:
                   "log_group_name": "/squid-proxy/cache.log",
                   "log_stream_name": "{instance_id}",
                   "timezone": "Local"
+                },
+                {
+                  "file_path": "/var/log/iptables.log",
+                  "log_group_name": "/squid-proxy/iptables.log",
+                  "log_stream_name": "{instance_id}",
+                  "timezone": "Local"
                 }
               ]
             }
@@ -153,3 +242,4 @@ write_files:
 
 runcmd:
   - /root/startup.sh
+  - [ systemctl, restart, rsyslog ]
