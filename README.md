@@ -1,6 +1,6 @@
-# Squid Proxy Module
+# Nat Instance Module
 
-This Terraform module provisions an Amazon Autoscaling group with a squid proxy, allowing for a low-cost alternative to a NAT gateway whilst providing filtering for outbound http/https traffic.
+This Terraform module provisions an Amazon Autoscaling group with a EC2 instance running iptables and squid proxy, allowing for a low-cost alternative to a NAT gateway whilst providing filtering for outbound http/https traffic.
 
 ## Overview
 
@@ -16,7 +16,7 @@ The running instances can be accessed via SSM for debugging purposes.
 ## Usage with Terraform
 
 ```hcl
-module "squid_proxy" {
+module "nat-instance" {
   source = "git@github.com:<org>/squid-proxy.git?ref=v1.0.0"
 
   allowed_domains = [

@@ -58,7 +58,7 @@ variable "instance_type" {
 variable "name" {
   description = "The name to use for resources."
   type        = string
-  default     = "squid"
+  default     = "nat"
 }
 
 variable "private_subnet_ids" {
@@ -72,6 +72,6 @@ variable "public_subnet_ids" {
 }
 
 variable "vpc_id" {
-  description = "The ID of the VPC to deploy the squid proxy to."
+  description = "The ID of the VPC to deploy the NAT instance/squid proxy to."
   type        = string
 }

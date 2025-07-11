@@ -190,12 +190,6 @@ write_files:
                 "measurement": [
                   "pid_count"
                 ]
-              },
-              {
-                "pattern": "/usr/sbin/iptables",
-                "measurement": [
-                  "pid_count"
-                ]
               }
             ]
           },
@@ -210,19 +204,19 @@ write_files:
               "collect_list": [
                 {
                   "file_path": "/var/log/squid/access.log*",
-                  "log_group_name": "/squid-proxy/access.log",
+                  "log_group_name": "/nat-instance/access.log",
                   "log_stream_name": "{instance_id}",
                   "timezone": "Local"
                 },
                 {
                   "file_path": "/var/log/squid/cache.log*",
-                  "log_group_name": "/squid-proxy/cache.log",
+                  "log_group_name": "/nat-instance/cache.log",
                   "log_stream_name": "{instance_id}",
                   "timezone": "Local"
                 },
                 {
                   "file_path": "/var/log/iptables.log",
-                  "log_group_name": "/squid-proxy/iptables.log",
+                  "log_group_name": "/nat-instance/iptables.log",
                   "log_stream_name": "{instance_id}",
                   "timezone": "Local"
                 }

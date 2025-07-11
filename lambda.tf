@@ -19,7 +19,7 @@ resource "aws_iam_role" "lambda" {
 resource "aws_iam_policy" "lambda" {
   name        = "${local.name}-lambda-policy"
   policy      = data.aws_iam_policy_document.lambda.json
-  description = "Policy for the Squid proxy alarm lambda function."
+  description = "Policy for the NAT instance/squid proxy alarm lambda function."
 }
 
 data "aws_iam_policy_document" "lambda" {
@@ -116,7 +116,7 @@ resource "aws_iam_role_policy_attachment" "lambda_managed" {
 resource "aws_lambda_permission" "alarm_sns" {
   statement_id  = "AllowExecutionFromAlarmSNS"
   action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.squid.function_name
+  function_name = aws_lambda_function.nat.function_name
   principal     = "sns.amazonaws.com"
   source_arn    = aws_sns_topic.alarm.arn
 }
@@ -124,7 +124,7 @@ resource "aws_lambda_permission" "alarm_sns" {
 resource "aws_lambda_permission" "lifecycle_sns" {
   statement_id  = "AllowExecutionFromLifecycleSNS"
   action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.squid.function_name
+  function_name = aws_lambda_function.nat.function_name
   principal     = "sns.amazonaws.com"
   source_arn    = aws_sns_topic.asg_lifecycle.arn
 }
@@ -147,7 +147,7 @@ data "archive_file" "lambda_source_code" {
 }
 
 # Lambda function
-resource "aws_lambda_function" "squid" {
+resource "aws_lambda_function" "nat" {
   function_name = "${local.name}-lambda"
   architectures = var.architectures
   role          = aws_iam_role.lambda.arn

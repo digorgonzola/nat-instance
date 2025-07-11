@@ -29,7 +29,7 @@ locals {
   userdata = templatefile("${path.module}/templates/cloud-init.tpl", {
     architecture        = local.architecture
     aws_region          = data.aws_region.current.region
-    eip_allocation_id   = var.enable_eip ? aws_eip.squid[0].id : ""
+    eip_allocation_id   = var.enable_eip ? aws_eip.nat[0].id : ""
     lifecycle_hook_name = local.lifecycle_hook_name
     s3_bucket           = module.config_bucket.s3_bucket_id
     vpc_cidr_block      = data.aws_vpc.this.cidr_block
@@ -37,23 +37,23 @@ locals {
 }
 
 resource "aws_cloudwatch_log_group" "access" {
-  name              = "/squid-proxy/access.log"
+  name              = "/nat-instance/access.log"
   retention_in_days = 14
 }
 
 resource "aws_cloudwatch_log_group" "cache" {
-  name              = "/squid-proxy/cache.log"
+  name              = "/nat-instance/cache.log"
   retention_in_days = 14
 }
 
 resource "aws_cloudwatch_log_group" "iptables" {
-  name              = "/squid-proxy/iptables.log"
+  name              = "/nat-instance/iptables.log"
   retention_in_days = 14
 }
 
 resource "aws_security_group" "instance" {
   name        = "${local.name}-instance-sg"
-  description = "Security group for Squid proxy instances."
+  description = "Security group for NAT instance/squid proxy instances."
   vpc_id      = data.aws_vpc.this.id
 
   tags = {
@@ -102,10 +102,10 @@ resource "aws_iam_role" "instance" {
   })
 }
 
-# Custom IAM policy for the Squid instances
+# Custom IAM policy for the NAT instance/squid instance
 resource "aws_iam_policy" "instance" {
   name        = "${local.name}-instance-policy"
-  description = "Policy for the Squid proxy instances."
+  description = "Policy for the NAT instance/squid proxy instances."
   policy      = data.aws_iam_policy_document.instance.json
 }
 
@@ -186,7 +186,7 @@ resource "aws_iam_instance_profile" "instance" {
   role = aws_iam_role.instance.name
 }
 
-resource "aws_launch_template" "squid" {
+resource "aws_launch_template" "nat" {
   name          = "${local.name}-launchtemplate"
   image_id      = data.aws_ami.amazon_linux_2.id
   instance_type = var.instance_type
@@ -239,7 +239,7 @@ resource "aws_launch_template" "squid" {
   }
 }
 
-resource "aws_eip" "squid" {
+resource "aws_eip" "nat" {
   count = var.enable_eip ? 1 : 0
 
   tags = {
@@ -247,7 +247,7 @@ resource "aws_eip" "squid" {
   }
 }
 
-resource "aws_autoscaling_group" "squid" {
+resource "aws_autoscaling_group" "nat" {
   name                      = "${local.name}-asg"
   max_size                  = 1
   min_size                  = 1
@@ -278,8 +278,8 @@ resource "aws_autoscaling_group" "squid" {
   }
 
   launch_template {
-    id      = aws_launch_template.squid.id
-    version = aws_launch_template.squid.latest_version
+    id      = aws_launch_template.nat.id
+    version = aws_launch_template.nat.latest_version
   }
 
   tag {
@@ -300,8 +300,8 @@ resource "aws_autoscaling_group" "squid" {
     aws_cloudwatch_log_group.access,
     aws_cloudwatch_log_group.cache,
     aws_cloudwatch_log_group.iptables,
-    aws_eip.squid,
-    aws_lambda_function.squid,
+    aws_eip.nat,
+    aws_lambda_function.nat,
     aws_iam_role_policy_attachment.cloudwatch,
     aws_iam_role_policy_attachment.custom,
     aws_iam_role_policy_attachment.ssm,
@@ -352,5 +352,5 @@ resource "aws_sns_topic" "asg_lifecycle" {
 resource "aws_sns_topic_subscription" "lambda_sub" {
   topic_arn = aws_sns_topic.asg_lifecycle.arn
   protocol  = "lambda"
-  endpoint  = aws_lambda_function.squid.arn
+  endpoint  = aws_lambda_function.nat.arn
 }

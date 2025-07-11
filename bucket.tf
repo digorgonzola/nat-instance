@@ -46,7 +46,7 @@ module "whitelist" {
 resource "aws_lambda_permission" "s3_trigger" {
   statement_id  = "AllowExecutionFromS3Bucket"
   action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.squid.function_name
+  function_name = aws_lambda_function.nat.function_name
   principal     = "s3.amazonaws.com"
   source_arn    = module.config_bucket.s3_bucket_arn
 }
@@ -55,7 +55,7 @@ resource "aws_s3_bucket_notification" "bucket_notification" {
   bucket = module.config_bucket.s3_bucket_id
 
   lambda_function {
-    lambda_function_arn = aws_lambda_function.squid.arn
+    lambda_function_arn = aws_lambda_function.nat.arn
     events = [
       "s3:ObjectCreated:*",
     ]
