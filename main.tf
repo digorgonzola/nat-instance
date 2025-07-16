@@ -227,9 +227,9 @@ resource "aws_launch_template" "nat" {
 
   tag_specifications {
     resource_type = "instance"
-    tags = {
+    tags = merge({
       UserDataHash = md5(local.userdata)
-    }
+    }, var.tags)
   }
 
   lifecycle {
@@ -292,6 +292,15 @@ resource "aws_autoscaling_group" "nat" {
     key                 = "RouteTableIds"
     propagate_at_launch = false
     value               = join(",", distinct(data.aws_route_table.private[*].id))
+  }
+
+  dynamic "tag" {
+    for_each = var.tags
+    content {
+      key                 = tag.key
+      propagate_at_launch = false
+      value               = tag.value
+    }
   }
 
   depends_on = [

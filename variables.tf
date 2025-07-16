@@ -71,6 +71,12 @@ variable "public_subnet_ids" {
   type        = list(string)
 }
 
+variable "tags" {
+  description = "Tags to apply to the resources."
+  type        = map(string)
+  default     = {}
+}
+
 variable "vpc_id" {
   description = "The ID of the VPC to deploy the NAT instance/squid proxy to."
   type        = string
