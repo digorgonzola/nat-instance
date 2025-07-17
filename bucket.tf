@@ -14,11 +14,18 @@ module "config_bucket" {
       }
     }
   }
+
+  lifecycle_rule = [
+    {
+      id      = "abort-incomplete-multipart-uploads"
+      enabled = true
+
+      abort_incomplete_multipart_upload_days = 7
+    },
+  ]
+
   tags = {
     AutoScalingGroupName = "${local.name}-asg"
-  }
-  versioning = {
-    enabled = true
   }
 }
 
