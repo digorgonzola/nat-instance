@@ -14,6 +14,11 @@ data "aws_vpc" "this" {
   id = var.vpc_id
 }
 
+data "aws_subnet" "private" {
+  for_each = toset(var.private_subnet_ids)
+  id       = each.value
+}
+
 data "aws_route_table" "private" {
   count     = length(var.private_subnet_ids)
   subnet_id = var.private_subnet_ids[count.index]
