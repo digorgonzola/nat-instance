@@ -17,10 +17,10 @@ locals {
       to_port     = 443
     },
   }
-  default_ingress_rules = {
-    ingress_all = {
-      cidr_ipv4   = "0.0.0.0/0"
-      description = "Allow all inbound traffic."
+  default_ingress_rules = { for key, value in data.aws_subnet.private :
+    "ingress-${value.id}" => {
+      cidr_ipv4   = value.cidr_block
+      description = "Allow inbound traffic from private subnet ${value.id}."
       ip_protocol = "-1"
       from_port   = -1
       to_port     = -1
