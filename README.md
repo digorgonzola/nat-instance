@@ -17,13 +17,23 @@ The running instances can be accessed via SSM for debugging purposes.
 
 ```hcl
 module "nat-instance" {
-  source = "git@github.com:<org>/squid-proxy.git?ref=v1.0.0"
+  source = "git@github.com:<org>/nat-instance.git?ref=v2.3.1"
 
-  allowed_domains = [
+  additional_egress_rules = {
+    mongodb = {
+      cidr_ipv4   = "0.0.0.0/0"
+      description = "Allow MongoDB connections"
+      ip_protocol = "tcp"
+      from_port   = 27016
+      to_port     = 27017
+    }
+  }
+  allowed_web_domains = [
     ".amazonaws.com",
     "api.sendgrid.com",
   ]
   enable_eip         = true
+  name               = "myapp-test-nat"
   private_subnet_ids = ["subnet-10a214dfcd63a97a4", "subnet-c727b18850685046b"]
   public_subnet_ids  = ["subnet-37f911e98a8616eee", "subnet-233bfad11fdd81dfd"]
   vpc_id             = "vpc-1eb7bfbe312f068e1"
@@ -51,6 +61,7 @@ module "nat-instance" {
 | <a name="input_name"></a> [name](#input\_name) | The name to use for resources. | `string` | `"nat"` | no |
 | <a name="input_private_subnet_ids"></a> [private\_subnet\_ids](#input\_private\_subnet\_ids) | List of private subnet ID's in the VPC. | `list(string)` | n/a | yes |
 | <a name="input_public_subnet_ids"></a> [public\_subnet\_ids](#input\_public\_subnet\_ids) | List of public subnet ID's to deploy the ASG to. | `list(string)` | n/a | yes |
+| <a name="input_tags"></a> [tags](#input\_tags) | Tags to apply to the resources. | `map(string)` | `{}` | no |
 | <a name="input_vpc_id"></a> [vpc\_id](#input\_vpc\_id) | The ID of the VPC to deploy the NAT instance/squid proxy to. | `string` | n/a | yes |
 ## Modules
 
@@ -61,7 +72,9 @@ module "nat-instance" {
 | <a name="module_whitelist"></a> [whitelist](#module\_whitelist) | terraform-aws-modules/s3-bucket/aws//modules/object | ~> 5.0 |
 ## Outputs
 
-No outputs.
+| Name | Description |
+|------|-------------|
+| <a name="output_public_ip"></a> [public\_ip](#output\_public\_ip) | n/a |
 ## Providers
 
 | Name | Version |
@@ -121,5 +134,6 @@ No outputs.
 | [aws_iam_policy_document.lambda](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
 | [aws_region.current](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/region) | data source |
 | [aws_route_table.private](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/route_table) | data source |
+| [aws_subnet.private](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/subnet) | data source |
 | [aws_vpc.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/vpc) | data source |
 <!-- END_TF_DOCS -->
