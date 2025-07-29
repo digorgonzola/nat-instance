@@ -12,4 +12,4 @@ concurrency:
 jobs:
   pre-commit:
     name: Run pre-commit checks
-    uses: ISW-Cloud42/github-actions/opentofu-modules/pre-commit.yml@main
+    uses: ISW-Cloud42/github-actions/.github/workflows/tofu-pre-commit.yml@main
