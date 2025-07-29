@@ -13,13 +13,6 @@
         "https://registry.opentofu.org"
       ],
       "semanticCommitType": "fix"
-    },
-    {
-      "matchManagers": [
-        "asdf"
-      ],
-      "groupName": "Infrastructure tools",
-      "groupSlug": "infra-tools"
     }
   ]
 }
