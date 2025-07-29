@@ -79,8 +79,8 @@ module "nat-instance" {
 
 | Name | Version |
 |------|---------|
-| <a name="provider_archive"></a> [archive](#provider\_archive) | 2.7.1 |
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.2.0 |
+| <a name="provider_archive"></a> [archive](#provider\_archive) | n/a |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | ~> 6.0 |
 ## Requirements
 
 | Name | Version |
