@@ -13,19 +13,15 @@ repos:
     hooks:
       - id: gitleaks
   - repo: https://github.com/antonbabenko/pre-commit-terraform
-    rev: v1.99.0
+    rev: v1.99.5
     hooks:
       - id: terraform_fmt
       - id: terragrunt_fmt
       - id: terraform_trivy
-        stages:
-          - manual
         args:
           - --hook-config=--parallelism-ci-cpu-cores=1
           - --args=--ignorefile=__GIT_WORKING_DIR__/.trivyignore
       - id: terraform_docs
-        stages:
-          - manual
         args:
           - --args=--config=.tfdocs-config.yml
           - --hook-config=--create-file-if-not-exist=true
