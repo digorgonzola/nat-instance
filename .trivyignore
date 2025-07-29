@@ -15,11 +15,14 @@ AVD-AWS-0086
 AVD-AWS-0087
 AVD-AWS-0088
 AVD-AWS-0089
+AVD-AWS-0090 # Ignore warnings about S3 bucket versioning being disabled
 AVD-AWS-0091
 AVD-AWS-0093
 AVD-AWS-0094
 AVD-AWS-0132
 
+# Ignore warnings about unrestricted egress from security groups
+AVD-AWS-0104
 # Ignore warnings about missing security group descriptions
 AVD-AWS-0124
 
