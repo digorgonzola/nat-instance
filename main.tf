@@ -232,6 +232,13 @@ resource "aws_launch_template" "nat" {
     }, var.tags)
   }
 
+  tag_specifications {
+    resource_type = "volume"
+    tags = merge({
+      Name = "${local.name}-volume"
+    }, var.tags)
+  }
+
   lifecycle {
     ignore_changes = [
       image_id,
