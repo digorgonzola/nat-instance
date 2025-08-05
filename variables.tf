@@ -49,6 +49,12 @@ variable "enable_eip" {
   default     = false
 }
 
+variable "enable_spot_instance" {
+  description = "Whether or not to use spot instances for the ASG."
+  type        = bool
+  default     = false
+}
+
 variable "instance_type" {
   description = "The instance type to use for the ASG."
   type        = string

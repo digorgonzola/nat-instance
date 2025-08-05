@@ -277,9 +277,18 @@ resource "aws_autoscaling_group" "nat" {
     }
   }
 
-  launch_template {
-    id      = aws_launch_template.nat.id
-    version = aws_launch_template.nat.latest_version
+  mixed_instances_policy {
+    instances_distribution {
+      on_demand_base_capacity                  = var.enable_spot_instance ? 0 : 1
+      on_demand_percentage_above_base_capacity = 0
+    }
+
+    launch_template {
+      launch_template_specification {
+        launch_template_id = aws_launch_template.nat.id
+        version            = aws_launch_template.nat.latest_version
+      }
+    }
   }
 
   tag {

@@ -57,6 +57,7 @@ module "nat-instance" {
 | <a name="input_architectures"></a> [architectures](#input\_architectures) | Lambda function architecture. | `list(string)` | <pre>[<br/>  "arm64"<br/>]</pre> | no |
 | <a name="input_detailed_monitoring"></a> [detailed\_monitoring](#input\_detailed\_monitoring) | Whether or not to enable detailed monitoring for the EC2 instance. | `bool` | `false` | no |
 | <a name="input_enable_eip"></a> [enable\_eip](#input\_enable\_eip) | Whether or not to enable a consistent elastic IP for the EC2 instances. | `bool` | `false` | no |
+| <a name="input_enable_spot_instance"></a> [enable\_spot\_instance](#input\_enable\_spot\_instance) | Whether or not to use spot instances for the ASG. | `bool` | `false` | no |
 | <a name="input_instance_type"></a> [instance\_type](#input\_instance\_type) | The instance type to use for the ASG. | `string` | `"t4g.small"` | no |
 | <a name="input_name"></a> [name](#input\_name) | The name to use for resources. | `string` | `"nat"` | no |
 | <a name="input_private_subnet_ids"></a> [private\_subnet\_ids](#input\_private\_subnet\_ids) | List of private subnet ID's in the VPC. | `list(string)` | n/a | yes |
