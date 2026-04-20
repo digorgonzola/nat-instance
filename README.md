@@ -60,35 +60,30 @@ module "nat-instance" {
 }
 ```
 
-> **Note:** Ensure all instance types in `instance_type_overrides` share the same CPU architecture as the AMI selected by the module (ARM64 by default). Mixing architectures (e.g. `t4g` and `t3a`) will cause launch failures.
+> **Important:** All instance types in `instance_type_overrides` must share the same CPU architecture as `var.instance_type`, since the AMI is selected based on the primary instance type's architecture. Mixing architectures (e.g. `t4g` ARM64 with `t3a` x86) will cause launch failures.
+
+Compatible ARM64 (Graviton) instance types for NAT workloads:
+
+| Family | Types | Notes |
+| --- | --- | --- |
+| `t4g` | `t4g.nano`, `t4g.micro`, `t4g.small`, `t4g.medium` | Burstable, lowest cost. Good default for low-to-moderate traffic. |
+| `c7g` | `c7g.medium`, `c7g.large` | Compute-optimised Graviton3. Good for higher throughput NAT workloads. |
+| `c6g` | `c6g.medium`, `c6g.large` | Compute-optimised Graviton2. Wider availability than c7g in some regions. |
+| `m7g` | `m7g.medium`, `m7g.large` | General purpose Graviton3. |
+| `m6g` | `m6g.medium`, `m6g.large` | General purpose Graviton2. Wide regional availability. |
+
+For x86-based deployments (when `instance_type` is x86), compatible alternatives include `t3.small`, `t3a.small`, `c5.large`, and `c6i.large`.
 
 ### On-demand fallback
 
-By default, when `enable_spot_instance = true` the ASG requests 100% spot capacity. If all spot pools are exhausted, **no instance will launch**. Since this is NAT infrastructure that affects all private subnet egress, you may want to configure an on-demand fallback.
-
-Use `on_demand_base_capacity` and `on_demand_percentage_above_base_capacity` to control this behaviour:
+By default, when `enable_spot_instance = true` the ASG requests 100% spot capacity. If all spot pools are exhausted, **no instance will launch**. The mixed instances policy uses a fixed ratio, not a priority order — there is no native "prefer spot, fall back to on-demand" for a single-instance ASG. Use `on_demand_base_capacity` and `on_demand_percentage_above_base_capacity` to control the behaviour:
 
 | Scenario | `on_demand_base_capacity` | `on_demand_percentage_above_base_capacity` | Result |
 | --- | --- | --- | --- |
-| 100% spot, no fallback (default) | `0` | `0` | Spot only. If unavailable, nothing launches. |
-| Spot preferred, on-demand fallback | `0` | `100` | Tries spot first. Falls back to on-demand if spot is unavailable. |
-| Always on-demand | `1` | `100` | On-demand guaranteed. No spot. |
+| 100% spot (default when spot enabled) | `0` | `0` | Spot only. If unavailable, nothing launches. |
+| 100% on-demand (default when spot disabled) | `1` | `100` | On-demand only. Guaranteed availability. |
 
-Example with on-demand fallback:
-
-```hcl
-module "nat-instance" {
-  source = "git@github.com:<org>/nat-instance.git?ref=v3.0.0"
-
-  enable_spot_instance                     = true
-  instance_type                            = "t4g.small"
-  instance_type_overrides                  = ["t4g.small", "t4g.micro", "t4g.medium"]
-  on_demand_base_capacity                  = 0
-  on_demand_percentage_above_base_capacity = 100
-
-  # ... other variables
-}
-```
+For a single-instance ASG, the recommendation is to use 100% spot with multiple `instance_type_overrides` to maximise pool diversity. With `price-capacity-optimized` and capacity rebalancing, the probability of exhausting all spot pools simultaneously is very low.
 
 ### Capacity rebalancing
 
