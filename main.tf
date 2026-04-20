@@ -291,6 +291,7 @@ resource "aws_autoscaling_group" "nat" {
   health_check_grace_period = 300
   health_check_type         = "EC2"
   default_instance_warmup   = 30
+  capacity_rebalance        = coalesce(var.capacity_rebalance, var.enable_spot_instance)
   vpc_zone_identifier       = var.public_subnet_ids
 
   initial_lifecycle_hook {
@@ -316,14 +317,23 @@ resource "aws_autoscaling_group" "nat" {
 
   mixed_instances_policy {
     instances_distribution {
-      on_demand_base_capacity                  = var.enable_spot_instance ? 0 : 1
-      on_demand_percentage_above_base_capacity = 0
+      on_demand_base_capacity                  = coalesce(var.on_demand_base_capacity, var.enable_spot_instance ? 0 : 1)
+      on_demand_percentage_above_base_capacity = coalesce(var.on_demand_percentage_above_base_capacity, var.enable_spot_instance ? 0 : 100)
+      spot_allocation_strategy                 = var.enable_spot_instance ? var.spot_allocation_strategy : null
+      spot_instance_pools                      = var.spot_instance_pools
     }
 
     launch_template {
       launch_template_specification {
         launch_template_id = aws_launch_template.nat.id
         version            = aws_launch_template.nat.latest_version
+      }
+
+      dynamic "override" {
+        for_each = length(var.instance_type_overrides) > 0 ? var.instance_type_overrides : [var.instance_type]
+        content {
+          instance_type = override.value
+        }
       }
     }
   }

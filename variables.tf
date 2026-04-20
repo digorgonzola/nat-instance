@@ -67,10 +67,51 @@ variable "enable_spot_instance" {
   default     = false
 }
 
+variable "on_demand_base_capacity" {
+  description = "Minimum number of on-demand instances in the ASG. For a single-instance ASG, set to 1 to guarantee an on-demand instance when spot is unavailable."
+  type        = number
+  default     = null
+}
+
+variable "on_demand_percentage_above_base_capacity" {
+  description = "Percentage of instances above the base capacity that should be on-demand. Set to 100 to fall back to on-demand when spot is unavailable."
+  type        = number
+  default     = null
+}
+
 variable "instance_type" {
-  description = "The instance type to use for the ASG."
+  description = "The instance type to use for the ASG. Also used as the primary instance type in the mixed instances policy."
   type        = string
   default     = "t4g.small"
+}
+
+variable "instance_type_overrides" {
+  description = "Additional instance types for the mixed instances policy. Provides more capacity pools for spot and improves availability. When empty, only var.instance_type is used."
+  type        = list(string)
+  default     = []
+}
+
+variable "spot_allocation_strategy" {
+  description = "Strategy for allocating spot instances. Valid values: 'capacity-optimized', 'capacity-optimized-prioritized', 'lowest-price', 'price-capacity-optimized'. Note: AWS recommends 'price-capacity-optimized' over 'lowest-price'."
+  type        = string
+  default     = "price-capacity-optimized"
+
+  validation {
+    condition     = contains(["capacity-optimized", "capacity-optimized-prioritized", "lowest-price", "price-capacity-optimized"], var.spot_allocation_strategy)
+    error_message = "spot_allocation_strategy must be one of: capacity-optimized, capacity-optimized-prioritized, lowest-price, price-capacity-optimized."
+  }
+}
+
+variable "spot_instance_pools" {
+  description = "Number of spot instance pools across which to allocate instances. Only valid when spot_allocation_strategy is 'lowest-price'. Set to 0 for other strategies."
+  type        = number
+  default     = 0
+}
+
+variable "capacity_rebalance" {
+  description = "Whether capacity rebalancing is enabled. When true, the ASG proactively replaces spot instances that receive a rebalance recommendation."
+  type        = bool
+  default     = null
 }
 
 variable "name" {

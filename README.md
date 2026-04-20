@@ -40,6 +40,64 @@ module "nat-instance" {
 }
 ```
 
+## Spot Instances
+
+The module supports running on spot instances to reduce costs. When `enable_spot_instance` is set to `true`, the ASG will request spot capacity using a [mixed instances policy](https://docs.aws.amazon.com/autoscaling/ec2/userguide/mixed-instances-groups.html).
+
+### Instance type diversification
+
+Spot availability varies by instance type and availability zone. To improve the chances of obtaining capacity, provide multiple instance types via `instance_type_overrides`. AWS will select from these pools based on the chosen `spot_allocation_strategy`.
+
+```hcl
+module "nat-instance" {
+  source = "git@github.com:<org>/nat-instance.git?ref=v3.0.0"
+
+  enable_spot_instance    = true
+  instance_type           = "t4g.small"
+  instance_type_overrides = ["t4g.small", "t4g.micro", "t4g.medium"]
+
+  # ... other variables
+}
+```
+
+> **Note:** Ensure all instance types in `instance_type_overrides` share the same CPU architecture as the AMI selected by the module (ARM64 by default). Mixing architectures (e.g. `t4g` and `t3a`) will cause launch failures.
+
+### On-demand fallback
+
+By default, when `enable_spot_instance = true` the ASG requests 100% spot capacity. If all spot pools are exhausted, **no instance will launch**. Since this is NAT infrastructure that affects all private subnet egress, you may want to configure an on-demand fallback.
+
+Use `on_demand_base_capacity` and `on_demand_percentage_above_base_capacity` to control this behaviour:
+
+| Scenario | `on_demand_base_capacity` | `on_demand_percentage_above_base_capacity` | Result |
+| --- | --- | --- | --- |
+| 100% spot, no fallback (default) | `0` | `0` | Spot only. If unavailable, nothing launches. |
+| Spot preferred, on-demand fallback | `0` | `100` | Tries spot first. Falls back to on-demand if spot is unavailable. |
+| Always on-demand | `1` | `100` | On-demand guaranteed. No spot. |
+
+Example with on-demand fallback:
+
+```hcl
+module "nat-instance" {
+  source = "git@github.com:<org>/nat-instance.git?ref=v3.0.0"
+
+  enable_spot_instance                     = true
+  instance_type                            = "t4g.small"
+  instance_type_overrides                  = ["t4g.small", "t4g.micro", "t4g.medium"]
+  on_demand_base_capacity                  = 0
+  on_demand_percentage_above_base_capacity = 100
+
+  # ... other variables
+}
+```
+
+### Capacity rebalancing
+
+When `enable_spot_instance = true`, `capacity_rebalance` is enabled by default. This allows the ASG to proactively replace spot instances that receive an [EC2 rebalance recommendation](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/rebalance-recommendations.html) before they are interrupted. Set `capacity_rebalance = false` to disable this behaviour.
+
+### Allocation strategy
+
+The `spot_allocation_strategy` defaults to `price-capacity-optimized`, which AWS recommends for most workloads. This strategy selects spot pools that are both low-cost and have high available capacity, reducing the likelihood of interruption. The `lowest-price` strategy is supported but not recommended, as it cannot be used with capacity rebalancing.
+
 ## Notes
 
 - Instance AMI will not be updated automatically (ignored in lifecycle)
@@ -50,42 +108,48 @@ module "nat-instance" {
 ## Inputs
 
 | Name | Description | Type | Default | Required |
-|------|-------------|------|---------|:--------:|
+| ---- | ----------- | ---- | ------- | :------: |
 | <a name="input_additional_egress_rules"></a> [additional\_egress\_rules](#input\_additional\_egress\_rules) | Additional egress rules to apply to the security group. | <pre>map(object({<br/>    name = optional(string)<br/><br/>    cidr_ipv4                    = optional(string)<br/>    cidr_ipv6                    = optional(string)<br/>    description                  = optional(string)<br/>    from_port                    = optional(string)<br/>    ip_protocol                  = optional(string, "tcp")<br/>    prefix_list_id               = optional(string)<br/>    referenced_security_group_id = optional(string)<br/>    tags                         = optional(map(string), {})<br/>    to_port                      = optional(string)<br/>  }))</pre> | `{}` | no |
 | <a name="input_additional_ingress_rules"></a> [additional\_ingress\_rules](#input\_additional\_ingress\_rules) | Additional ingress rules to apply to the security group. | <pre>map(object({<br/>    name = optional(string)<br/><br/>    cidr_ipv4                    = optional(string)<br/>    cidr_ipv6                    = optional(string)<br/>    description                  = optional(string)<br/>    from_port                    = optional(string)<br/>    ip_protocol                  = optional(string, "tcp")<br/>    prefix_list_id               = optional(string)<br/>    referenced_security_group_id = optional(string)<br/>    tags                         = optional(map(string), {})<br/>    to_port                      = optional(string)<br/>  }))</pre> | `{}` | no |
 | <a name="input_allowed_web_domains"></a> [allowed\_web\_domains](#input\_allowed\_web\_domains) | List of allowed domains. | `list(string)` | <pre>[<br/>  ".amazonaws.com",<br/>  ".amazon.com"<br/>]</pre> | no |
 | <a name="input_architectures"></a> [architectures](#input\_architectures) | Lambda function architecture. | `list(string)` | <pre>[<br/>  "arm64"<br/>]</pre> | no |
+| <a name="input_capacity_rebalance"></a> [capacity\_rebalance](#input\_capacity\_rebalance) | Whether capacity rebalancing is enabled. When true, the ASG proactively replaces spot instances that receive a rebalance recommendation. | `bool` | `null` | no |
 | <a name="input_detailed_monitoring"></a> [detailed\_monitoring](#input\_detailed\_monitoring) | Whether or not to enable detailed monitoring for the EC2 instance. | `bool` | `false` | no |
 | <a name="input_enable_eip"></a> [enable\_eip](#input\_enable\_eip) | Whether or not to enable a consistent elastic IP for the EC2 instances. | `bool` | `false` | no |
 | <a name="input_enable_spot_instance"></a> [enable\_spot\_instance](#input\_enable\_spot\_instance) | Whether or not to use spot instances for the ASG. | `bool` | `false` | no |
-| <a name="input_instance_type"></a> [instance\_type](#input\_instance\_type) | The instance type to use for the ASG. | `string` | `"t4g.small"` | no |
+| <a name="input_instance_type"></a> [instance\_type](#input\_instance\_type) | The instance type to use for the ASG. Also used as the primary instance type in the mixed instances policy. | `string` | `"t4g.small"` | no |
+| <a name="input_instance_type_overrides"></a> [instance\_type\_overrides](#input\_instance\_type\_overrides) | Additional instance types for the mixed instances policy. Provides more capacity pools for spot and improves availability. When empty, only var.instance\_type is used. | `list(string)` | `[]` | no |
 | <a name="input_name"></a> [name](#input\_name) | The name to use for resources. | `string` | `"nat"` | no |
+| <a name="input_on_demand_base_capacity"></a> [on\_demand\_base\_capacity](#input\_on\_demand\_base\_capacity) | Minimum number of on-demand instances in the ASG. For a single-instance ASG, set to 1 to guarantee an on-demand instance when spot is unavailable. | `number` | `null` | no |
+| <a name="input_on_demand_percentage_above_base_capacity"></a> [on\_demand\_percentage\_above\_base\_capacity](#input\_on\_demand\_percentage\_above\_base\_capacity) | Percentage of instances above the base capacity that should be on-demand. Set to 100 to fall back to on-demand when spot is unavailable. | `number` | `null` | no |
 | <a name="input_private_subnet_ids"></a> [private\_subnet\_ids](#input\_private\_subnet\_ids) | List of private subnet ID's in the VPC. | `list(string)` | n/a | yes |
 | <a name="input_public_subnet_ids"></a> [public\_subnet\_ids](#input\_public\_subnet\_ids) | List of public subnet ID's to deploy the ASG to. | `list(string)` | n/a | yes |
+| <a name="input_spot_allocation_strategy"></a> [spot\_allocation\_strategy](#input\_spot\_allocation\_strategy) | Strategy for allocating spot instances. Valid values: 'capacity-optimized', 'capacity-optimized-prioritized', 'lowest-price', 'price-capacity-optimized'. Note: AWS recommends 'price-capacity-optimized' over 'lowest-price'. | `string` | `"price-capacity-optimized"` | no |
+| <a name="input_spot_instance_pools"></a> [spot\_instance\_pools](#input\_spot\_instance\_pools) | Number of spot instance pools across which to allocate instances. Only valid when spot\_allocation\_strategy is 'lowest-price'. Set to 0 for other strategies. | `number` | `0` | no |
 | <a name="input_tags"></a> [tags](#input\_tags) | Tags to apply to the resources. | `map(string)` | `{}` | no |
 | <a name="input_vpc_id"></a> [vpc\_id](#input\_vpc\_id) | The ID of the VPC to deploy the NAT instance/squid proxy to. | `string` | n/a | yes |
 ## Modules
 
 | Name | Source | Version |
-|------|--------|---------|
+| ---- | ------ | ------- |
 | <a name="module_config_bucket"></a> [config\_bucket](#module\_config\_bucket) | terraform-aws-modules/s3-bucket/aws | ~> 5.0 |
 | <a name="module_squid_config"></a> [squid\_config](#module\_squid\_config) | terraform-aws-modules/s3-bucket/aws//modules/object | ~> 5.0 |
 | <a name="module_whitelist"></a> [whitelist](#module\_whitelist) | terraform-aws-modules/s3-bucket/aws//modules/object | ~> 5.0 |
 ## Outputs
 
 | Name | Description |
-|------|-------------|
+| ---- | ----------- |
 | <a name="output_public_ip"></a> [public\_ip](#output\_public\_ip) | n/a |
 ## Providers
 
 | Name | Version |
-|------|---------|
+| ---- | ------- |
 | <a name="provider_archive"></a> [archive](#provider\_archive) | n/a |
 | <a name="provider_aws"></a> [aws](#provider\_aws) | ~> 6.0 |
 ## Requirements
 
 | Name | Version |
-|------|---------|
+| ---- | ------- |
 | <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.8 |
 | <a name="requirement_aws"></a> [aws](#requirement\_aws) | ~> 6.0 |
 | <a name="requirement_random"></a> [random](#requirement\_random) | ~> 3.6 |
@@ -93,7 +157,7 @@ module "nat-instance" {
 ## Resources
 
 | Name | Type |
-|------|------|
+| ---- | ---- |
 | [aws_autoscaling_group.nat](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/autoscaling_group) | resource |
 | [aws_cloudwatch_log_group.access](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_log_group) | resource |
 | [aws_cloudwatch_log_group.cache](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_log_group) | resource |
