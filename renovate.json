@@ -3,6 +3,23 @@
   "extends": [
     "config:recommended"
   ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Lambda Python runtime and the CI Python that tests it. AWS publishes the Lambda base image tag when the runtime is GA, so the tag list is the set of runtimes that Lambda supports.",
+      "managerFilePatterns": [
+        "/^lambda\\.tf$/",
+        "/^\\.github/workflows/test\\.yml$/"
+      ],
+      "matchStrings": [
+        "runtime\\s*=\\s*\"python(?<currentValue>\\d+\\.\\d+)\"",
+        "python-version:\\s*\"(?<currentValue>\\d+\\.\\d+)\""
+      ],
+      "depNameTemplate": "public.ecr.aws/lambda/python",
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "regex:^(?<major>\\d+)\\.(?<minor>\\d+)$"
+    }
+  ],
   "packageRules": [
     {
       "matchDatasources": [
@@ -12,6 +29,24 @@
       "registryUrls": [
         "https://registry.opentofu.org"
       ],
+      "semanticCommitType": "fix"
+    },
+    {
+      "description": "The custom manager above owns the CI Python version, so it only moves to a version that Lambda supports.",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchDepNames": [
+        "python"
+      ],
+      "enabled": false
+    },
+    {
+      "description": "Bump the Lambda runtime and the CI Python in one PR. fix, so that the runtime change gets a release.",
+      "matchDepNames": [
+        "public.ecr.aws/lambda/python"
+      ],
+      "groupName": "Lambda Python runtime",
       "semanticCommitType": "fix"
     }
   ]

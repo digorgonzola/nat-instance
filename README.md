@@ -124,7 +124,7 @@ The `spot_allocation_strategy` defaults to `price-capacity-optimized`, which AWS
 
 The `tests/` directory has two test suites. Neither needs AWS credentials. The `Tests` workflow runs both on each pull request to `main`.
 
-The pytest tests cover the Lambda function in `src/main.py`, with mocked AWS clients, and the instance scripts in `templates/cloud-init.tpl`, with stubbed commands. To run them locally (Python 3.13, the same as the Lambda runtime):
+The pytest tests cover the Lambda function in `src/main.py`, with mocked AWS clients, and the instance scripts in `templates/cloud-init.tpl`, with stubbed commands. To run them locally, use the Python version of the Lambda runtime in `lambda.tf`:
 
 ```sh
 python3 -m venv .venv
@@ -181,13 +181,13 @@ The Terraform module has Terratest tests. They validate the [examples](examples/
 | Name | Version |
 | ---- | ------- |
 | <a name="provider_archive"></a> [archive](#provider\_archive) | n/a |
-| <a name="provider_aws"></a> [aws](#provider\_aws) | ~> 6.0 |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | ~> 6.58 |
 ## Requirements
 
 | Name | Version |
 | ---- | ------- |
 | <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.8 |
-| <a name="requirement_aws"></a> [aws](#requirement\_aws) | ~> 6.0 |
+| <a name="requirement_aws"></a> [aws](#requirement\_aws) | ~> 6.58 |
 | <a name="requirement_random"></a> [random](#requirement\_random) | ~> 3.6 |
 | <a name="requirement_time"></a> [time](#requirement\_time) | 0.13.1 |
 ## Resources
