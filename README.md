@@ -30,7 +30,7 @@ Existing TCP connections through the old instance are dropped at cutover because
 
 Each instance checks itself every 30 seconds with `nat-health-check.timer`. The check is the same as the bootstrap self-test. After 3 failed checks in a row, the instance restarts squid if squid is the part that failed. After 5 failed checks in a row (about 2.5 minutes) it marks itself `Unhealthy`, and the Auto Scaling group replaces it with the flow above. If the instance stops responding completely, the EC2 status checks fail and the Auto Scaling group replaces it.
 
-Failed checks, squid restarts and the `Unhealthy` call are logged to the `/nat-instance/instance.log` CloudWatch log group, in a stream named after the instance ID.
+Failed checks, squid restarts and the `Unhealthy` call are logged to the `/nat-instance/instance.log` CloudWatch log group, in a stream named after the instance ID. Each failed check names the part that failed, for example `check failed (2 in a row): MASQUERADE rule is missing on ens5`. Passing checks are not logged.
 
 ## Squid configuration changes
 

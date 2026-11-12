@@ -20,6 +20,7 @@ TEMPLATE_VALUES = {
 USER_DATA_LIMIT_BYTES = 16 * 1024
 INTERPOLATION = re.compile(r'(?<!\$)\$\{([^}]+)\}')
 INSTANCE_LOG = '/var/log/nat-instance.log'
+SQUID_CHATTER = 'Processing Configuration File: /etc/squid/squid.conf (depth 0)'
 
 
 def render_template():
@@ -68,8 +69,8 @@ class Instance:
     """Runs the instance scripts against stub commands, with their paths moved under root.
 
     Files in root stand for instance state: `squid-running`, `healthy` (the nat-healthy stub),
-    and the faults `forwarding-off`, `masquerade-missing`, `closed-<port>`, `s3-down` and
-    `terminate-on-sleep`.
+    and the faults `forwarding-off`, `masquerade-missing`, `closed-<port>`, `s3-down`,
+    `aws-api-down`, `squid-hung` and `terminate-on-sleep`.
     """
 
     def __init__(self, root):
@@ -77,7 +78,7 @@ class Instance:
         self.bin = root / 'bin'
         self.etc_squid = root / 'etc' / 'squid'
         self.bucket = root / 'bucket'
-        self.failures_file = root / 'run' / 'failures'
+        self.failures_file = root / 'run' / 'nat-health-failures'
         self.rejected_file = root / 'lib.rejected'
         self.calls_log = root / 'calls.log'
         for directory in (self.bin, self.etc_squid, self.bucket, self.failures_file.parent, root / 'lib'):
@@ -87,12 +88,14 @@ class Instance:
         running = root / 'squid-running'
         conf = self.etc_squid / 'squid.conf'
         stubs = {
-            'nat-healthy': f'[ -f {root}/healthy ]',
+            'nat-healthy': f'[ -f {root}/healthy ] || {{ echo "MASQUERADE rule is missing on ens5"; exit 1; }}',
             'systemctl': f'case "$1" in is-active) [ -f {running} ];; restart) touch {running};; esac',
+            # Real squid prints each config line it processes on every -k command.
             'squid': (
+                f'echo "{SQUID_CHATTER}" >&2; '
                 f'case "$2" in parse) ! grep -q INVALID {conf};; '
                 f'reconfigure) if grep -q CRASH {conf}; then rm -f {running}; fi;; '
-                f'check) [ -f {running} ];; esac'
+                f'check) [ -f {running} ] && [ ! -f {root}/squid-hung ];; esac'
             ),
             # macOS has no timeout command, so run the wrapped command directly.
             'timeout': 'shift; exec "$@"',
@@ -104,7 +107,10 @@ class Instance:
             'ss': f'port=${{2##*:}}; [ -f {root}/closed-$port ] || echo "LISTEN 0 4096 *:$port *:*"',
             'curl': 'if [[ "$*" == *instance-id* ]]; then echo i-test; else echo token; fi',
             # --checksum: tests rewrite files with the same size within the same second.
-            'aws': f'[ ! -f {root}/s3-down ] || exit 1; if [ "$1" = s3 ]; then rsync -a --checksum --delete {self.bucket}/ "$4"/; fi',
+            'aws': (
+                f'[ ! -f {root}/s3-down ] || exit 1; [ "$1" != autoscaling ] || [ ! -f {root}/aws-api-down ] || exit 1; '
+                f'if [ "$1" = s3 ]; then rsync -a --checksum --delete {self.bucket}/ "$4"/; fi'
+            ),
         }
         for name, body in stubs.items():
             self._write_executable(self.bin / name, f'#!/bin/bash\necho "{name} $*" >> {self.calls_log}\n{body}\n')
@@ -112,7 +118,7 @@ class Instance:
         moved_paths = {
             '/usr/local/bin/nat-healthy': self.bin / 'nat-healthy',
             '/usr/sbin/squid': self.bin / 'squid',
-            '/run/nat-health-failures': self.failures_file,
+            '/run/': f'{self.failures_file.parent}/',
             '/var/lib/squid-config': root / 'lib',
             '/etc/squid': self.etc_squid,
         }
@@ -164,20 +170,27 @@ def instance(tmp_path):
     return Instance(tmp_path)
 
 
-def test_nat_healthy_passes_when_everything_works(instance):
-    assert instance.run('nat-healthy').returncode == 0
+def test_nat_healthy_passes_quietly_when_everything_works(instance):
+    result = instance.run('nat-healthy')
+
+    assert result.returncode == 0
+    assert result.stdout == '' and result.stderr == ''
 
 
-@pytest.mark.parametrize('fault', [
-    pytest.param(('squid-running', False), id='squid-stopped'),
-    pytest.param(('forwarding-off', True), id='ip-forwarding-off'),
-    pytest.param(('masquerade-missing', True), id='masquerade-rule-missing'),
-    pytest.param(('closed-3128', True), id='proxy-port-closed'),
+@pytest.mark.parametrize('fault, message', [
+    pytest.param(('squid-running', False), 'squid service is not active', id='squid-stopped'),
+    pytest.param(('squid-hung', True), 'squid is not responding', id='squid-not-responding'),
+    pytest.param(('forwarding-off', True), 'IP forwarding is off', id='ip-forwarding-off'),
+    pytest.param(('masquerade-missing', True), 'MASQUERADE rule is missing on ens5', id='masquerade-rule-missing'),
+    pytest.param(('closed-3128', True), 'nothing is listening on port 3128', id='proxy-port-closed'),
 ])
-def test_nat_healthy_fails_when_a_part_is_broken(instance, fault):
+def test_nat_healthy_names_the_failed_check(instance, fault, message):
     instance.set(*fault)
 
-    assert instance.run('nat-healthy').returncode != 0
+    result = instance.run('nat-healthy')
+
+    assert result.returncode != 0
+    assert result.stdout + result.stderr == f'{message}\n'
 
 
 def test_health_monitor_does_nothing_while_healthy(instance):
@@ -209,6 +222,36 @@ def test_health_monitor_restarts_stopped_squid_then_marks_instance_unhealthy(ins
         '--no-should-respect-grace-period --region ap-southeast-2'
     ]
     assert instance.calls('systemctl') == ['systemctl restart squid']
+
+
+def test_health_monitor_logs_the_failed_check(instance):
+    instance.set('healthy', False)
+
+    result = instance.run('nat-health-monitor')
+
+    assert result.stdout == 'nat-health-check: check failed (1 in a row): MASQUERADE rule is missing on ens5\n'
+
+
+def test_health_monitor_marks_the_instance_unhealthy_once(instance):
+    instance.set('healthy', False)
+
+    for _ in range(8):
+        instance.run('nat-health-monitor')
+
+    assert len(instance.calls('aws autoscaling set-instance-health')) == 1
+
+
+def test_health_monitor_retries_a_failed_unhealthy_call(instance):
+    instance.set('healthy', False)
+    instance.set('aws-api-down', True)
+    for _ in range(5):
+        instance.run('nat-health-monitor')
+
+    instance.set('aws-api-down', False)
+    instance.run('nat-health-monitor')
+    instance.run('nat-health-monitor')
+
+    assert len(instance.calls('aws autoscaling set-instance-health')) == 2
 
 
 def test_health_monitor_does_not_restart_squid_when_squid_is_not_the_problem(instance):
@@ -252,6 +295,8 @@ def test_config_sync_installs_changed_files_and_reconfigures(instance):
     assert result.returncode == 0, result.stderr
     assert instance.squid_files() == {'squid.conf': 'http_port 3128\n', 'whitelist.txt': '.example.com\n'}
     assert instance.calls('squid') == ['squid -k check', 'squid -k parse', 'squid -k reconfigure', 'squid -k check']
+    assert result.stdout == 'squid-config-sync: applied the config from S3\n'
+    assert result.stderr == ''
 
 
 def test_config_sync_leaves_squid_alone_when_nothing_changed(instance):
@@ -273,6 +318,15 @@ def test_config_sync_rolls_back_a_config_that_fails_to_parse(instance):
     assert instance.squid_files() == {'squid.conf': 'http_port 3128\n', 'whitelist.txt': '.example.com\n'}
     assert 'squid -k reconfigure' not in instance.calls('squid')
     assert instance.calls('systemctl restart') == []
+    # The parse output explains why squid rejected the config, so it is logged on failure.
+    assert SQUID_CHATTER in result.stderr
+    assert '(squid -k parse failed)' in result.stderr
+    assert result.stderr.count('could not apply the config') == 1
+    assert instance.rejected_file.exists()
+
+    instance.clear_calls()
+    assert instance.run('squid-config-sync').returncode != 0
+    assert instance.calls('squid') == []
 
 
 def test_config_sync_rolls_back_and_restarts_when_squid_dies_on_reload(instance):
@@ -285,6 +339,7 @@ def test_config_sync_rolls_back_and_restarts_when_squid_dies_on_reload(instance)
     assert instance.squid_files()['squid.conf'] == 'http_port 3128\n'
     assert instance.calls('systemctl restart') == ['systemctl restart squid']
     assert instance.is_set('squid-running')
+    assert '(systemctl is-active --quiet squid)' in result.stderr
 
 
 def test_config_sync_removes_new_files_when_rolling_back(instance):

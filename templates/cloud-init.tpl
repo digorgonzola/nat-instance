@@ -36,16 +36,23 @@ write_files:
     permissions: '0755'
     content: |
       #!/bin/bash
-      # Fails when this instance cannot forward or proxy traffic. Used by the launch self-test
-      # and by nat-health-check.timer.
-      set -e
-      systemctl is-active --quiet squid
-      /usr/sbin/squid -k check
-      [ "$(sysctl -n net.ipv4.ip_forward)" = "1" ]
+      # Fails when this instance cannot forward or proxy traffic, and prints the check that
+      # failed. Used by the launch self-test and by nat-health-check.timer.
+      check() {
+        local description=$1
+        shift
+        if ! "$@" > /dev/null 2>&1; then
+          echo "$description"
+          exit 1
+        fi
+      }
+      check "squid service is not active" systemctl is-active --quiet squid
+      check "squid is not responding" /usr/sbin/squid -k check
+      check "IP forwarding is off" test "$(sysctl -n net.ipv4.ip_forward)" = 1
       interface=$(ip route | awk '/^default/ {print $5; exit}')
-      iptables -t nat -C POSTROUTING -o "$interface" -j MASQUERADE
+      check "MASQUERADE rule is missing on $interface" iptables -t nat -C POSTROUTING -o "$interface" -j MASQUERADE
       for port in 3128 3129 3130; do
-        ss -ltn "sport = :$port" | grep -q LISTEN
+        check "nothing is listening on port $port" bash -c "ss -ltn 'sport = :$port' | grep -q LISTEN"
       done
   - path: /usr/local/bin/nat-health-monitor
     permissions: '0755'
@@ -55,24 +62,26 @@ write_files:
       # marks the instance Unhealthy. The ASG launches the replacement first, and the Lambda keeps
       # the routes on this instance until the replacement is InService.
       failures_file=/run/nat-health-failures
-      if check_output=$(/usr/local/bin/nat-healthy 2>&1); then
+      marked_unhealthy_file=/run/nat-health-marked-unhealthy
+      if failed_check=$(/usr/local/bin/nat-healthy 2>&1); then
         echo 0 > "$failures_file"
         exit 0
       fi
 
       failures=$(( $(cat "$failures_file" 2>/dev/null || echo 0) + 1 ))
       echo "$failures" > "$failures_file"
-      echo "nat-health-check: check failed ($failures in a row): $check_output"
+      echo "nat-health-check: check failed ($failures in a row): $failed_check"
 
-      if [ "$failures" -eq 3 ] && ! /usr/sbin/squid -k check; then
+      if [ "$failures" -eq 3 ] && ! /usr/sbin/squid -k check > /dev/null 2>&1; then
         echo "nat-health-check: restarting squid"
         systemctl restart squid
-      elif [ "$failures" -ge 5 ]; then
+      elif [ "$failures" -ge 5 ] && [ ! -f "$marked_unhealthy_file" ]; then
         token=$(curl -sf --max-time 5 -X PUT http://169.254.169.254/latest/api/token -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
         instance_id=$(curl -sf --max-time 5 -H "X-aws-ec2-metadata-token: $token" http://169.254.169.254/latest/meta-data/instance-id)
         echo "nat-health-check: marking $instance_id Unhealthy"
+        # Only recorded on success, so a failed call is retried on the next run.
         aws autoscaling set-instance-health --instance-id "$instance_id" --health-status Unhealthy \
-          --no-should-respect-grace-period --region ${aws_region}
+          --no-should-respect-grace-period --region ${aws_region} && touch "$marked_unhealthy_file"
       fi
   - path: /usr/local/bin/squid-config-sync
     permissions: '0755'
@@ -121,19 +130,19 @@ write_files:
       squid_rejected_config=false
       roll_back() {
         trap - ERR TERM
-        echo "squid-config-sync: could not apply the config from S3, restoring the previous config" >&2
+        echo "squid-config-sync: could not apply the config from S3 ($1), restoring the previous config" >&2
         for name in "$${added[@]}"; do rm -f -- "/etc/squid/$name"; done
         cp -a "$previous/." /etc/squid/
         if [ "$1" != terminated ] && $squid_rejected_config; then
           echo "$version" > "$rejected_file"
           echo "squid-config-sync: squid rejected the config, it is skipped until the files change" >&2
         fi
-        if ! systemctl is-active --quiet squid || ! /usr/sbin/squid -k check; then
+        if ! systemctl is-active --quiet squid || ! /usr/sbin/squid -k check > /dev/null 2>&1; then
           systemctl restart squid
         fi
         exit 1
       }
-      trap roll_back ERR
+      trap 'roll_back "$BASH_COMMAND"' ERR
       trap 'roll_back terminated' TERM
 
       for name in "$${names[@]}"; do
@@ -141,12 +150,17 @@ write_files:
         cp "$staging/$name" "/etc/squid/$name"
       done
       squid_rejected_config=true
-      /usr/sbin/squid -k parse
-      /usr/sbin/squid -k reconfigure
+      # squid prints every config line it processes, so its output is only logged on failure.
+      # trap - ERR: set -E would otherwise run roll_back inside the subshell as well.
+      if ! parse_output=$(trap - ERR; /usr/sbin/squid -k parse 2>&1); then
+        echo "$parse_output" >&2
+        roll_back "squid -k parse failed"
+      fi
+      /usr/sbin/squid -k reconfigure > /dev/null 2>&1
       # reconfigure only signals squid, so check that squid is still running with the new config.
       sleep 5
       systemctl is-active --quiet squid
-      /usr/sbin/squid -k check
+      /usr/sbin/squid -k check > /dev/null 2>&1
 
       trap - ERR TERM
       echo "squid-config-sync: applied the config from S3"
