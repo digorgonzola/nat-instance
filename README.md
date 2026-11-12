@@ -6,9 +6,9 @@ This Terraform module provisions an Amazon Autoscaling group with an EC2 instanc
 
 The module creates:
 - An Autoscaling group to maintain EC2 instances in a running state
-- A Lambda function to perform various actions in response to metric alarms, S3 triggers and to perform updates to the private route table(s)
-- An S3 trigger to detect changes to squid configuration files
-- A cloud-init template to configure iptables, squid and Cloudwatch agent on the EC2 instances
+- A Lambda function that moves the private default routes and the Elastic IP to the healthy instance
+- An S3 bucket for the squid configuration files, which each instance applies when they change
+- A cloud-init template to configure iptables, squid, the CloudWatch agent and the instance health check on the EC2 instances
 - Cloudwatch log groups for the squid proxy cache and access logs, and Lambda invocation logs
 
 The running instances can be accessed via SSM for debugging purposes.
@@ -25,6 +25,20 @@ Instance refreshes, capacity rebalancing and health replacements launch the new 
 The Lambda runs on each lifecycle hook notification and every minute on an EventBridge schedule. The schedule repairs blackholed routes and releases held instances if a notification is lost or a Lambda invocation fails.
 
 Existing TCP connections through the old instance are dropped at cutover because connection-tracking state is not shared between instances. New connections use the new instance.
+
+## Instance health
+
+Each instance checks itself every 30 seconds with `nat-health-check.timer`. The check is the same as the bootstrap self-test. After 3 failed checks in a row, the instance restarts squid if squid is the part that failed. After 5 failed checks in a row (about 2.5 minutes) it marks itself `Unhealthy`, and the Auto Scaling group replaces it with the flow above. If the instance stops responding completely, the EC2 status checks fail and the Auto Scaling group replaces it.
+
+Failed checks, squid restarts and the `Unhealthy` call are logged to the `/nat-instance/instance.log` CloudWatch log group, in a stream named after the instance ID.
+
+## Squid configuration changes
+
+Each instance checks the S3 bucket for changes every minute with `squid-config-sync.timer`. When a file in the bucket changes, the instance installs it, checks the config with `squid -k parse`, reloads squid with `squid -k reconfigure`, and then checks that squid is still running. The instance is not replaced.
+
+If squid is not running when a change arrives, the instance waits and tries again on the next run. If any step fails, the instance puts the previous files back and restarts squid if it stopped. If squid itself rejected the config, the instance does not try those file contents again until they change; uploading the same contents again does not count as a change. To force a retry, delete `/var/lib/squid-config.rejected` on the instance. The result of each change is logged to the `/nat-instance/instance.log` CloudWatch log group. A rejected config is logged again every minute until it is fixed.
+
+A new instance applies the config from S3 during bootstrap. If squid rejects that config, the launch is abandoned and the current instance keeps serving traffic. So fix a rejected config quickly: until then, the Auto Scaling group cannot replace the instance.
 
 ## Usage with Terraform
 
@@ -110,7 +124,7 @@ The `spot_allocation_strategy` defaults to `price-capacity-optimized`, which AWS
 
 The `tests/` directory has two test suites. Neither needs AWS credentials. The `Tests` workflow runs both on each pull request to `main`.
 
-The Lambda function in `src/main.py` has unit tests that use mocked AWS clients. To run them locally (Python 3.13, the same as the Lambda runtime):
+The pytest tests cover the Lambda function in `src/main.py`, with mocked AWS clients, and the instance scripts in `templates/cloud-init.tpl`, with stubbed commands. To run them locally (Python 3.13, the same as the Lambda runtime):
 
 ```sh
 python3 -m venv .venv
@@ -122,7 +136,7 @@ The Terraform module has Terratest tests. They validate the [examples](examples/
 
 ## Notes
 
-- Instance AMI will not be updated automatically (ignored in lifecycle)
+- The launch template uses the newest Amazon Linux 2023 AMI. When a newer AMI is available, the next apply updates the launch template and starts an instance refresh.
 
 <!-- BEGIN_TF_DOCS -->
 
@@ -186,9 +200,9 @@ The Terraform module has Terratest tests. They validate the [examples](examples/
 | [aws_cloudwatch_event_target.reconcile](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_event_target) | resource |
 | [aws_cloudwatch_log_group.access](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_log_group) | resource |
 | [aws_cloudwatch_log_group.cache](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_log_group) | resource |
+| [aws_cloudwatch_log_group.instance](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_log_group) | resource |
 | [aws_cloudwatch_log_group.iptables](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_log_group) | resource |
 | [aws_cloudwatch_log_group.lambda](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_log_group) | resource |
-| [aws_cloudwatch_metric_alarm.squid](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_metric_alarm) | resource |
 | [aws_eip.nat](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/eip) | resource |
 | [aws_iam_instance_profile.instance](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_instance_profile) | resource |
 | [aws_iam_policy.instance](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_policy) | resource |
@@ -202,16 +216,11 @@ The Terraform module has Terratest tests. They validate the [examples](examples/
 | [aws_iam_role_policy_attachment.lambda_custom](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy_attachment) | resource |
 | [aws_iam_role_policy_attachment.lambda_managed](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy_attachment) | resource |
 | [aws_lambda_function.nat](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lambda_function) | resource |
-| [aws_lambda_permission.alarm_sns](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lambda_permission) | resource |
 | [aws_lambda_permission.lifecycle_sns](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lambda_permission) | resource |
 | [aws_lambda_permission.reconcile_schedule](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lambda_permission) | resource |
-| [aws_lambda_permission.s3_trigger](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lambda_permission) | resource |
 | [aws_launch_template.nat](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/launch_template) | resource |
-| [aws_s3_bucket_notification.bucket_notification](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket_notification) | resource |
 | [aws_security_group.instance](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/security_group) | resource |
-| [aws_sns_topic.alarm](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/sns_topic) | resource |
 | [aws_sns_topic.asg_lifecycle](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/sns_topic) | resource |
-| [aws_sns_topic_subscription.lambda](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/sns_topic_subscription) | resource |
 | [aws_sns_topic_subscription.lambda_sub](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/sns_topic_subscription) | resource |
 | [aws_sqs_queue.dlq](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/sqs_queue) | resource |
 | [aws_vpc_security_group_egress_rule.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/vpc_security_group_egress_rule) | resource |

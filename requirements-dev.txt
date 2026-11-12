@@ -1,4 +1,5 @@
-# Test dependencies for the Lambda function in src/. The Lambda runtime provides boto3,
-# so nothing here is packaged with the function.
+# Test dependencies for the Lambda function in src/ and the cloud-init template. The Lambda
+# runtime provides boto3, so nothing here is packaged with the function.
 boto3==1.44.1
 pytest==9.2.0
+pyyaml==6.0.3

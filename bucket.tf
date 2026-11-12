@@ -23,10 +23,6 @@ module "config_bucket" {
       abort_incomplete_multipart_upload_days = 7
     },
   ]
-
-  tags = {
-    AutoScalingGroupName = "${local.name}-asg"
-  }
 }
 
 module "squid_config" {
@@ -47,27 +43,4 @@ module "whitelist" {
   key         = "whitelist.txt"
   content     = local.whitelist
   source_hash = md5(local.whitelist)
-}
-
-# Permission for S3 to invoke Lambda - also only AFTER first run
-resource "aws_lambda_permission" "s3_trigger" {
-  statement_id  = "AllowExecutionFromS3Bucket"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.nat.function_name
-  principal     = "s3.amazonaws.com"
-  source_arn    = module.config_bucket.s3_bucket_arn
-}
-
-resource "aws_s3_bucket_notification" "bucket_notification" {
-  bucket = module.config_bucket.s3_bucket_id
-
-  lambda_function {
-    lambda_function_arn = aws_lambda_function.nat.arn
-    events = [
-      "s3:ObjectCreated:*",
-    ]
-  }
-  depends_on = [
-    aws_lambda_permission.s3_trigger,
-  ]
 }

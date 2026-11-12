@@ -24,15 +24,6 @@ resource "aws_iam_policy" "lambda" {
 
 data "aws_iam_policy_document" "lambda" {
   statement {
-    sid = "GetBucketTags"
-    actions = [
-      "s3:GetBucketTagging",
-    ]
-    resources = [
-      module.config_bucket.s3_bucket_arn
-    ]
-  }
-  statement {
     sid = "DescribeRouteTables"
     actions = [
       "ec2:Describe*",
@@ -65,9 +56,6 @@ data "aws_iam_policy_document" "lambda" {
     sid = "AllowUpdateAsg"
     actions = [
       "autoscaling:CompleteLifecycleAction",
-      "autoscaling:SetInstanceHealth",
-      "autoscaling:StartInstanceRefresh",
-      "autoscaling:TerminateInstanceInAutoScalingGroup",
     ]
     resources = [
       join(":", [
@@ -95,16 +83,6 @@ data "aws_iam_policy_document" "lambda" {
   }
 
   statement {
-    sid = "AllowDescribeCloudwatchAlarm"
-    actions = [
-      "cloudwatch:Describe*",
-    ]
-    resources = [
-      "arn:aws:cloudwatch:${data.aws_region.current.region}:${data.aws_caller_identity.this.account_id}:alarm:${local.name}-*",
-    ]
-  }
-
-  statement {
     sid = "SendMessageDlq"
     actions = [
       "sqs:SendMessage",
@@ -128,14 +106,6 @@ resource "aws_iam_role_policy_attachment" "lambda_managed" {
 }
 
 # Lambda permissions
-resource "aws_lambda_permission" "alarm_sns" {
-  statement_id  = "AllowExecutionFromAlarmSNS"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.nat.function_name
-  principal     = "sns.amazonaws.com"
-  source_arn    = aws_sns_topic.alarm.arn
-}
-
 resource "aws_lambda_permission" "lifecycle_sns" {
   statement_id  = "AllowExecutionFromLifecycleSNS"
   action        = "lambda:InvokeFunction"

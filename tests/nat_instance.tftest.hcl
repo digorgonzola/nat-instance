@@ -153,6 +153,26 @@ run "with_eip" {
   }
 }
 
+run "only_the_instance_decides_it_is_unhealthy" {
+  command = apply
+
+  assert {
+    condition = contains(
+      flatten([for statement in data.aws_iam_policy_document.instance.statement : statement.actions if statement.sid == "AsgLifecycle"]),
+      "autoscaling:SetInstanceHealth",
+    )
+    error_message = "The instance must be allowed to mark itself Unhealthy."
+  }
+
+  assert {
+    condition = length(setintersection(
+      flatten([for statement in data.aws_iam_policy_document.lambda.statement : statement.actions]),
+      ["autoscaling:SetInstanceHealth", "autoscaling:StartInstanceRefresh", "autoscaling:TerminateInstanceInAutoScalingGroup"],
+    )) == 0
+    error_message = "The Lambda only moves traffic; it must not replace instances."
+  }
+}
+
 run "invalid_spot_allocation_strategy_fails" {
   command = plan
 

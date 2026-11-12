@@ -52,6 +52,12 @@ resource "aws_cloudwatch_log_group" "iptables" {
   retention_in_days = 14
 }
 
+# Health check and squid config sync results from the instance.
+resource "aws_cloudwatch_log_group" "instance" {
+  name              = "/nat-instance/instance.log"
+  retention_in_days = 14
+}
+
 resource "aws_security_group" "instance" {
   name        = "${local.name}-instance-sg"
   description = "Security group for NAT instance/squid proxy instances."
@@ -167,6 +173,7 @@ data "aws_iam_policy_document" "instance" {
     sid = "AsgLifecycle"
     actions = [
       "autoscaling:CompleteLifecycleAction",
+      "autoscaling:SetInstanceHealth",
     ]
     resources = [
       join(":", [
@@ -245,7 +252,8 @@ resource "aws_launch_template" "nat" {
     ]
   }
 
-  user_data = base64encode(local.userdata)
+  # Compressed to stay under the 16 KB user data limit; cloud-init detects gzip.
+  user_data = base64gzip(local.userdata)
 
   tag_specifications {
     resource_type = "instance"
@@ -351,6 +359,7 @@ resource "aws_autoscaling_group" "nat" {
     aws_cloudwatch_log_group.access,
     aws_cloudwatch_log_group.cache,
     aws_cloudwatch_log_group.iptables,
+    aws_cloudwatch_log_group.instance,
     aws_eip.nat,
     aws_lambda_function.nat,
     aws_iam_role_policy_attachment.cloudwatch,

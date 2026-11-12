@@ -200,11 +200,21 @@ def test_lifecycle_notification_triggers_reconcile(transition):
     reconcile.assert_called_once_with()
 
 
-def test_alarm_terminates_inservice_instance_not_pending(aws):
-    aws.asg.describe_auto_scaling_groups.return_value = asg_response(
-        [('i-old', 'InService', 'Healthy'), ('i-new', 'Pending:Wait', 'Healthy')])
+@pytest.mark.parametrize('record', [
+    pytest.param({'Sns': {'Message': json.dumps({'Event': 'autoscaling:TEST_NOTIFICATION'})}},
+                 id='hook-test-notification'),
+    pytest.param({'eventSource': 'aws:s3'}, id='unknown-record'),
+])
+def test_other_records_do_not_reconcile(record):
+    with mock.patch.object(main, 'reconcile_nat_target') as reconcile:
+        main.lambda_handler({'Records': [record]}, None)
 
-    main.terminate_instance('nat-asg')
+    reconcile.assert_not_called()
 
-    aws.asg.terminate_instance_in_auto_scaling_group.assert_called_once_with(
-        InstanceId='i-old', ShouldDecrementDesiredCapacity=False)
+
+def test_hook_test_notification_is_not_a_warning(caplog):
+    message = {'Event': 'autoscaling:TEST_NOTIFICATION'}
+
+    main.lambda_handler({'Records': [{'Sns': {'Message': json.dumps(message)}}]}, None)
+
+    assert not [r for r in caplog.records if r.levelname == 'WARNING']

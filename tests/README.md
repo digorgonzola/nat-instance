@@ -2,7 +2,7 @@
 
 This directory has two test suites:
 
-- `test_*.py`: pytest unit tests for the Lambda function. See [Development](../README.md#development).
+- `test_*.py`: pytest unit tests for the Lambda function and the instance scripts in the cloud-init template. See [Development](../README.md#development).
 - `*_test.go` and `*.tftest.hcl`: Terratest tests for the Terraform module. This file describes them.
 
 ## Requirements
