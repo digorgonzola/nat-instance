@@ -57,14 +57,7 @@ data "aws_iam_policy_document" "lambda" {
     actions = [
       "autoscaling:CompleteLifecycleAction",
     ]
-    resources = [
-      join(":", [
-        "arn:aws:autoscaling",
-        data.aws_region.current.region,
-        data.aws_caller_identity.this.account_id,
-        "autoScalingGroup:*:autoScalingGroupName/${local.name}-asg",
-      ]),
-    ]
+    resources = local.asg_arns
   }
 
   dynamic "statement" {
@@ -74,11 +67,10 @@ data "aws_iam_policy_document" "lambda" {
       actions = [
         "ec2:AssociateAddress",
       ]
-      resources = [
-        aws_eip.nat[0].arn,
+      resources = concat(values(aws_eip.nat)[*].arn, [
         "arn:aws:ec2:${data.aws_region.current.region}:${data.aws_caller_identity.this.account_id}:instance/*",
         "arn:aws:ec2:${data.aws_region.current.region}:${data.aws_caller_identity.this.account_id}:network-interface/*",
-      ]
+      ])
     }
   }
 
@@ -161,14 +153,19 @@ resource "aws_lambda_function" "nat" {
   runtime       = "python3.15"
   timeout       = 30
 
+  # One run at a time, so a run acting on an older snapshot cannot move routes back onto an
+  # instance that a newer run has already released. Throttled async invocations are retried.
+  reserved_concurrent_executions = 1
+
   filename         = data.archive_file.lambda_source_code.output_path
   source_code_hash = data.archive_file.lambda_source_code.output_base64sha256
 
   environment {
     variables = {
-      ASG_NAME              = local.asg_name
       TERMINATION_HOOK_NAME = local.termination_hook_name
-      EIP_ALLOCATION_ID     = var.enable_eip ? aws_eip.nat[0].id : ""
+      NAT_GROUPS = jsonencode({
+        for key, group in local.nat_groups : group.asg_name => try(aws_eip.nat[key].id, "")
+      })
     }
   }
 

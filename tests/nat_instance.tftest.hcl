@@ -65,17 +65,17 @@ run "asg_launches_replacement_before_terminating" {
 
   assert {
     condition = (
-      aws_autoscaling_group.nat.instance_maintenance_policy[0].min_healthy_percentage == 100 &&
-      aws_autoscaling_group.nat.instance_maintenance_policy[0].max_healthy_percentage == 200 &&
-      aws_autoscaling_group.nat.instance_refresh[0].preferences[0].min_healthy_percentage == 100
+      aws_autoscaling_group.nat["single"].instance_maintenance_policy[0].min_healthy_percentage == 100 &&
+      aws_autoscaling_group.nat["single"].instance_maintenance_policy[0].max_healthy_percentage == 200 &&
+      aws_autoscaling_group.nat["single"].instance_refresh[0].preferences[0].min_healthy_percentage == 100
     )
     error_message = "The ASG must launch the replacement before it terminates the old instance."
   }
 
   assert {
     condition = (
-      one(aws_autoscaling_group.nat.initial_lifecycle_hook).lifecycle_transition == "autoscaling:EC2_INSTANCE_LAUNCHING" &&
-      one(aws_autoscaling_group.nat.initial_lifecycle_hook).default_result == "ABANDON"
+      one(aws_autoscaling_group.nat["single"].initial_lifecycle_hook).lifecycle_transition == "autoscaling:EC2_INSTANCE_LAUNCHING" &&
+      one(aws_autoscaling_group.nat["single"].initial_lifecycle_hook).default_result == "ABANDON"
     )
     error_message = "A replacement that never reports ready must be abandoned, not put in service."
   }
@@ -86,17 +86,17 @@ run "termination_hook_holds_old_instance_until_cutover" {
 
   assert {
     condition = (
-      aws_autoscaling_lifecycle_hook.terminating.lifecycle_transition == "autoscaling:EC2_INSTANCE_TERMINATING" &&
-      aws_autoscaling_lifecycle_hook.terminating.default_result == "CONTINUE" &&
-      aws_autoscaling_lifecycle_hook.terminating.notification_target_arn == aws_sns_topic.asg_lifecycle.arn
+      aws_autoscaling_lifecycle_hook.terminating["single"].lifecycle_transition == "autoscaling:EC2_INSTANCE_TERMINATING" &&
+      aws_autoscaling_lifecycle_hook.terminating["single"].default_result == "CONTINUE" &&
+      aws_autoscaling_lifecycle_hook.terminating["single"].notification_target_arn == aws_sns_topic.asg_lifecycle.arn
     )
     error_message = "The termination hook must notify the Lambda and continue on timeout."
   }
 
   assert {
     condition = (
-      aws_lambda_function.nat.environment[0].variables["ASG_NAME"] == aws_autoscaling_group.nat.name &&
-      aws_lambda_function.nat.environment[0].variables["TERMINATION_HOOK_NAME"] == aws_autoscaling_lifecycle_hook.terminating.name
+      keys(jsondecode(aws_lambda_function.nat.environment[0].variables["NAT_GROUPS"])) == [aws_autoscaling_group.nat["single"].name] &&
+      aws_lambda_function.nat.environment[0].variables["TERMINATION_HOOK_NAME"] == aws_autoscaling_lifecycle_hook.terminating["single"].name
     )
     error_message = "The Lambda must know which ASG and hook to complete."
   }
@@ -113,13 +113,22 @@ run "schedule_reconciles_every_minute" {
     )
     error_message = "The schedule must be allowed to invoke the Lambda every minute."
   }
+
+  assert {
+    condition     = aws_lambda_function.nat.reserved_concurrent_executions == 1
+    error_message = "Concurrent runs could move routes back onto an instance another run has released."
+  }
 }
 
 run "without_eip" {
   command = apply
 
   assert {
-    condition     = aws_lambda_function.nat.environment[0].variables["EIP_ALLOCATION_ID"] == "" && output.public_ip == null
+    condition = (
+      jsondecode(aws_lambda_function.nat.environment[0].variables["NAT_GROUPS"]) == { (aws_autoscaling_group.nat["single"].name) = "" } &&
+      output.public_ip == null &&
+      output.public_ips == {}
+    )
     error_message = "With the EIP disabled the Lambda must not move an EIP."
   }
 
@@ -138,8 +147,8 @@ run "with_eip" {
 
   assert {
     condition = (
-      aws_lambda_function.nat.environment[0].variables["EIP_ALLOCATION_ID"] == aws_eip.nat[0].id &&
-      output.public_ip == aws_eip.nat[0].public_ip
+      jsondecode(aws_lambda_function.nat.environment[0].variables["NAT_GROUPS"]) == { (aws_autoscaling_group.nat["single"].name) = aws_eip.nat["single"].id } &&
+      output.public_ip == aws_eip.nat["single"].public_ip
     )
     error_message = "The Lambda must be given the EIP to move to each replacement."
   }
@@ -147,7 +156,7 @@ run "with_eip" {
   assert {
     condition = contains(
       flatten([for statement in data.aws_iam_policy_document.lambda.statement : statement.resources if statement.sid == "AssociateEIP"]),
-      aws_eip.nat[0].arn,
+      aws_eip.nat["single"].arn,
     )
     error_message = "The Lambda must be allowed to associate the EIP."
   }
@@ -183,6 +192,161 @@ run "invalid_spot_allocation_strategy_fails" {
   expect_failures = [var.spot_allocation_strategy]
 }
 
+run "invalid_availability_mode_fails" {
+  command = plan
+
+  variables {
+    availability_mode = "multi"
+  }
+
+  expect_failures = [var.availability_mode]
+}
+
+run "per_az_runs_one_instance_and_eip_per_az" {
+  command = apply
+
+  variables {
+    availability_mode = "per_az"
+    enable_eip        = true
+  }
+
+  override_data {
+    target = data.aws_subnet.public["subnet-pub-a"]
+    values = { availability_zone = "az-a" }
+  }
+  override_data {
+    target = data.aws_subnet.public["subnet-pub-b"]
+    values = { availability_zone = "az-b" }
+  }
+  override_data {
+    target = data.aws_subnet.private["subnet-priv-a"]
+    values = { availability_zone = "az-a", cidr_block = "10.0.1.0/24" }
+  }
+  override_data {
+    target = data.aws_subnet.private["subnet-priv-b"]
+    values = { availability_zone = "az-b", cidr_block = "10.0.2.0/24" }
+  }
+  override_data {
+    target = data.aws_route_table.private[0]
+    values = { id = "rtb-a" }
+  }
+  override_data {
+    target = data.aws_route_table.private[1]
+    values = { id = "rtb-b" }
+  }
+
+  assert {
+    condition = (
+      aws_autoscaling_group.nat["az-a"].name == "t-az-a-asg" &&
+      aws_autoscaling_group.nat["az-a"].vpc_zone_identifier == toset(["subnet-pub-a"]) &&
+      aws_autoscaling_group.nat["az-b"].vpc_zone_identifier == toset(["subnet-pub-b"]) &&
+      length(aws_autoscaling_group.nat) == 2
+    )
+    error_message = "Each AZ must get its own ASG in its own public subnet."
+  }
+
+  assert {
+    condition = (
+      one([for tag in aws_autoscaling_group.nat["az-a"].tag : tag.value if tag.key == "RouteTableIds"]) == "rtb-a" &&
+      one([for tag in aws_autoscaling_group.nat["az-b"].tag : tag.value if tag.key == "RouteTableIds"]) == "rtb-b"
+    )
+    error_message = "Each ASG must serve only the route tables of its own AZ."
+  }
+
+  assert {
+    condition = (
+      length(aws_autoscaling_lifecycle_hook.terminating) == 2 &&
+      aws_autoscaling_lifecycle_hook.terminating["az-b"].autoscaling_group_name == aws_autoscaling_group.nat["az-b"].name
+    )
+    error_message = "Each ASG must hold its terminating instance until the Lambda moves traffic off it."
+  }
+
+  assert {
+    condition = jsondecode(aws_lambda_function.nat.environment[0].variables["NAT_GROUPS"]) == {
+      "t-az-a-asg" = aws_eip.nat["az-a"].id
+      "t-az-b-asg" = aws_eip.nat["az-b"].id
+    }
+    error_message = "The Lambda must be given every ASG and the EIP each one owns."
+  }
+
+  assert {
+    condition = (
+      output.public_ip == null &&
+      output.public_ips == { "az-a" = aws_eip.nat["az-a"].public_ip, "az-b" = aws_eip.nat["az-b"].public_ip }
+    )
+    error_message = "Every EIP must be output for third-party allowlists."
+  }
+
+  assert {
+    condition = length(flatten(
+      [for statement in data.aws_iam_policy_document.instance.statement : statement.resources if statement.sid == "AsgLifecycle"]
+    )) == 2
+    error_message = "Each instance must be allowed to complete its own ASG's lifecycle actions."
+  }
+}
+
+run "per_az_rejects_route_table_shared_across_azs" {
+  command = plan
+
+  variables {
+    availability_mode = "per_az"
+  }
+
+  override_data {
+    target = data.aws_subnet.public["subnet-pub-a"]
+    values = { availability_zone = "az-a" }
+  }
+  override_data {
+    target = data.aws_subnet.public["subnet-pub-b"]
+    values = { availability_zone = "az-b" }
+  }
+  override_data {
+    target = data.aws_subnet.private["subnet-priv-a"]
+    values = { availability_zone = "az-a", cidr_block = "10.0.1.0/24" }
+  }
+  override_data {
+    target = data.aws_subnet.private["subnet-priv-b"]
+    values = { availability_zone = "az-b", cidr_block = "10.0.2.0/24" }
+  }
+  override_data {
+    target = data.aws_route_table.private[0]
+    values = { id = "rtb-shared" }
+  }
+  override_data {
+    target = data.aws_route_table.private[1]
+    values = { id = "rtb-shared" }
+  }
+
+  expect_failures = [aws_autoscaling_group.nat]
+}
+
+run "per_az_rejects_az_without_public_subnet" {
+  command = plan
+
+  variables {
+    availability_mode = "per_az"
+  }
+
+  override_data {
+    target = data.aws_subnet.public["subnet-pub-a"]
+    values = { availability_zone = "az-a" }
+  }
+  override_data {
+    target = data.aws_subnet.public["subnet-pub-b"]
+    values = { availability_zone = "az-a" }
+  }
+  override_data {
+    target = data.aws_subnet.private["subnet-priv-a"]
+    values = { availability_zone = "az-a", cidr_block = "10.0.1.0/24" }
+  }
+  override_data {
+    target = data.aws_subnet.private["subnet-priv-b"]
+    values = { availability_zone = "az-b", cidr_block = "10.0.2.0/24" }
+  }
+
+  expect_failures = [aws_autoscaling_group.nat]
+}
+
 run "spot_instance_pools_sent_for_lowest_price" {
   command = plan
 
@@ -193,7 +357,7 @@ run "spot_instance_pools_sent_for_lowest_price" {
   }
 
   assert {
-    condition     = aws_autoscaling_group.nat.mixed_instances_policy[0].instances_distribution[0].spot_instance_pools == 3
+    condition     = aws_autoscaling_group.nat["single"].mixed_instances_policy[0].instances_distribution[0].spot_instance_pools == 3
     error_message = "spot_instance_pools must be sent when the strategy is lowest-price."
   }
 }
@@ -209,7 +373,7 @@ run "spot_instance_pools_not_sent_when_spot_disabled" {
   }
 
   assert {
-    condition     = aws_autoscaling_group.nat.mixed_instances_policy[0].instances_distribution[0].spot_instance_pools != 3
+    condition     = aws_autoscaling_group.nat["single"].mixed_instances_policy[0].instances_distribution[0].spot_instance_pools != 3
     error_message = "spot_instance_pools must be null when spot is disabled."
   }
 }
@@ -224,7 +388,7 @@ run "spot_instance_pools_not_sent_without_lowest_price" {
   }
 
   assert {
-    condition     = aws_autoscaling_group.nat.mixed_instances_policy[0].instances_distribution[0].spot_instance_pools != 3
+    condition     = aws_autoscaling_group.nat["single"].mixed_instances_policy[0].instances_distribution[0].spot_instance_pools != 3
     error_message = "spot_instance_pools must be null unless the strategy is lowest-price."
   }
 }

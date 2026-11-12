@@ -115,17 +115,18 @@ func TestIntegrationPlanExamples(t *testing.T) {
 	vars := integrationVars(t)
 	t.Parallel()
 
-	expectedResources := map[string][]string{
+	// Prefixes, because the per_az instance keys are the availability zones of the test VPC.
+	expectedResourcePrefixes := map[string][]string{
 		"minimal": {
-			"module.nat_instance.aws_autoscaling_group.nat",
-			"module.nat_instance.aws_autoscaling_lifecycle_hook.terminating",
+			`module.nat_instance.aws_autoscaling_group.nat["single"]`,
+			`module.nat_instance.aws_autoscaling_lifecycle_hook.terminating["single"]`,
 			"module.nat_instance.aws_cloudwatch_event_rule.reconcile",
 		},
 		"complete": {
-			"module.nat_instance.aws_autoscaling_group.nat",
-			"module.nat_instance.aws_autoscaling_lifecycle_hook.terminating",
+			`module.nat_instance.aws_autoscaling_group.nat["`,
+			`module.nat_instance.aws_autoscaling_lifecycle_hook.terminating["`,
 			"module.nat_instance.aws_cloudwatch_event_rule.reconcile",
-			"module.nat_instance.aws_eip.nat[0]",
+			`module.nat_instance.aws_eip.nat["`,
 		},
 	}
 
@@ -145,8 +146,14 @@ func TestIntegrationPlanExamples(t *testing.T) {
 			terraform.PlanContext(t, t.Context(), terraformOptions)
 			plan := terraform.ShowWithStructContext(t, t.Context(), terraformOptions)
 
-			for _, address := range expectedResources[example] {
-				terraform.RequirePlannedValuesMapKeyExists(t, plan, address)
+			for _, prefix := range expectedResourcePrefixes[example] {
+				found := false
+				for address := range plan.ResourcePlannedValuesMap {
+					found = found || strings.HasPrefix(address, prefix)
+				}
+				if !found {
+					t.Errorf("no planned resource address starts with %s", prefix)
+				}
 			}
 		})
 	}

@@ -28,6 +28,34 @@ locals {
       to_port     = -1
     }
   }
+  # Private route table ID => the AZ of each private subnet that uses it.
+  private_route_table_azs = {
+    for index, subnet_id in var.private_subnet_ids :
+    data.aws_route_table.private[index].id => data.aws_subnet.private[subnet_id].availability_zone...
+  }
+  public_subnet_ids_by_az = {
+    for subnet_id, subnet in data.aws_subnet.public : subnet.availability_zone => subnet_id...
+  }
+  # One ASG, and one EIP when enabled, per group. Each group's Lambda target serves its route tables.
+  nat_groups = var.availability_mode == "per_az" ? {
+    for az in distinct(values(data.aws_subnet.private)[*].availability_zone) : az => {
+      asg_name        = "${local.name}-${az}-asg"
+      eip_name        = "${local.name}-${az}-eip"
+      public_subnets  = lookup(local.public_subnet_ids_by_az, az, [])
+      route_table_ids = sort([for route_table_id, azs in local.private_route_table_azs : route_table_id if contains(azs, az)])
+    }
+    } : {
+    single = {
+      asg_name        = local.asg_name
+      eip_name        = "${local.name}-eip"
+      public_subnets  = var.public_subnet_ids
+      route_table_ids = distinct(data.aws_route_table.private[*].id)
+    }
+  }
+  asg_arns = [
+    for group in values(local.nat_groups) :
+    "arn:aws:autoscaling:${data.aws_region.current.region}:${data.aws_caller_identity.this.account_id}:autoScalingGroup:*:autoScalingGroupName/${group.asg_name}"
+  ]
   userdata = templatefile("${path.module}/templates/cloud-init.tpl", {
     architecture        = local.architecture
     aws_region          = data.aws_region.current.region
@@ -175,14 +203,7 @@ data "aws_iam_policy_document" "instance" {
       "autoscaling:CompleteLifecycleAction",
       "autoscaling:SetInstanceHealth",
     ]
-    resources = [
-      join(":", [
-        "arn:aws:autoscaling",
-        data.aws_region.current.region,
-        data.aws_caller_identity.this.account_id,
-        "autoScalingGroup:*:autoScalingGroupName/${local.name}-asg",
-      ]),
-    ]
+    resources = local.asg_arns
   }
 
   statement {
@@ -271,22 +292,29 @@ resource "aws_launch_template" "nat" {
 }
 
 resource "aws_eip" "nat" {
-  count = var.enable_eip ? 1 : 0
+  for_each = var.enable_eip ? local.nat_groups : {}
 
   tags = {
-    Name = "${local.name}-eip"
+    Name = each.value.eip_name
   }
 }
 
+moved {
+  from = aws_eip.nat[0]
+  to   = aws_eip.nat["single"]
+}
+
 resource "aws_autoscaling_group" "nat" {
-  name                      = local.asg_name
+  for_each = local.nat_groups
+
+  name                      = each.value.asg_name
   max_size                  = 1
   min_size                  = 1
   health_check_grace_period = 300
   health_check_type         = "EC2"
   default_instance_warmup   = 30
   capacity_rebalance        = coalesce(var.capacity_rebalance, var.enable_spot_instance)
-  vpc_zone_identifier       = var.public_subnet_ids
+  vpc_zone_identifier       = each.value.public_subnets
 
   initial_lifecycle_hook {
     name                    = local.lifecycle_hook_name
@@ -343,7 +371,7 @@ resource "aws_autoscaling_group" "nat" {
   tag {
     key                 = "RouteTableIds"
     propagate_at_launch = false
-    value               = join(",", distinct(data.aws_route_table.private[*].id))
+    value               = join(",", each.value.route_table_ids)
   }
 
   dynamic "tag" {
@@ -368,13 +396,33 @@ resource "aws_autoscaling_group" "nat" {
     aws_iam_role_policy_attachment.custom,
     aws_iam_role_policy.asg_lifecycle,
   ]
+
+  lifecycle {
+    precondition {
+      condition     = var.availability_mode == "single" || length(each.value.public_subnets) > 0
+      error_message = "availability_mode = \"per_az\" needs a public subnet in ${each.key}, which has private subnets."
+    }
+
+    # A route table shared across AZs would be claimed by more than one ASG.
+    precondition {
+      condition     = var.availability_mode == "single" || alltrue([for azs in values(local.private_route_table_azs) : length(distinct(azs)) == 1])
+      error_message = "availability_mode = \"per_az\" needs the private subnets in each AZ to use their own route tables, not one shared with another AZ."
+    }
+  }
+}
+
+moved {
+  from = aws_autoscaling_group.nat
+  to   = aws_autoscaling_group.nat["single"]
 }
 
 # Holds a terminating instance until the Lambda has moved the routes and EIP to a healthy
 # replacement. Managed outside initial_lifecycle_hook so it is also added to existing ASGs.
 resource "aws_autoscaling_lifecycle_hook" "terminating" {
+  for_each = aws_autoscaling_group.nat
+
   name                    = local.termination_hook_name
-  autoscaling_group_name  = aws_autoscaling_group.nat.name
+  autoscaling_group_name  = each.value.name
   lifecycle_transition    = "autoscaling:EC2_INSTANCE_TERMINATING"
   heartbeat_timeout       = 600
   default_result          = "CONTINUE"
@@ -385,6 +433,11 @@ resource "aws_autoscaling_lifecycle_hook" "terminating" {
     aws_sns_topic_subscription.lambda_sub,
     aws_iam_role_policy.asg_lifecycle,
   ]
+}
+
+moved {
+  from = aws_autoscaling_lifecycle_hook.terminating
+  to   = aws_autoscaling_lifecycle_hook.terminating["single"]
 }
 
 # IAM role for ASG lifecycle hook

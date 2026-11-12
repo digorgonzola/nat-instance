@@ -7,6 +7,7 @@ This Terraform module provisions an Amazon Autoscaling group with an EC2 instanc
 The module creates:
 - An Autoscaling group to maintain EC2 instances in a running state
 - A Lambda function that moves the private default routes and the Elastic IP to the healthy instance
+- Optionally, one Autoscaling group per availability zone, with failover between the zones (see [Availability modes](#availability-modes))
 - An S3 bucket for the squid configuration files, which each instance applies when they change
 - A cloud-init template to configure iptables, squid, the CloudWatch agent and the instance health check on the EC2 instances
 - Cloudwatch log groups for the squid proxy cache and access logs, and Lambda invocation logs
@@ -20,11 +21,28 @@ Instance refreshes, capacity rebalancing and health replacements launch the new 
 1. The new instance starts in `Pending:Wait`. The routes stay on the old instance while the new instance bootstraps.
 2. The bootstrap script does a self-test (squid running, IP forwarding on, NAT rule present, proxy ports listening). If the self-test passes, the script completes the launch lifecycle action with `CONTINUE` and the instance goes `InService`. If a step fails, the script completes the action with `ABANDON` and the old instance continues to serve traffic.
 3. The Lambda function moves the Elastic IP (when `enable_eip = true`), then the default route in each private route table, to the newest `InService` and `Healthy` instance.
-4. A termination lifecycle hook holds the old instance in `Terminating:Wait` until the Lambda has moved the traffic off it. If there is no healthy replacement yet, the hook holds the old instance until one is available, or until the 10-minute heartbeat timeout.
+4. A termination lifecycle hook holds the old instance in `Terminating:Wait` until the Lambda has moved the traffic off it. If there is no healthy replacement yet, the hook holds the old instance until one is available, or until the 10-minute heartbeat timeout. In `per_az` mode, an instance of a different AZ can be the replacement (see [Availability modes](#availability-modes)).
 
 The Lambda runs on each lifecycle hook notification and every minute on an EventBridge schedule. The schedule repairs blackholed routes and releases held instances if a notification is lost or a Lambda invocation fails.
 
 Existing TCP connections through the old instance are dropped at cutover because connection-tracking state is not shared between instances. New connections use the new instance.
+
+## Availability modes
+
+`availability_mode` sets how many NAT instances the module runs.
+
+- `single` (default): one Auto Scaling group with one instance serves all the private route tables. If that instance fails without a replacement ready, private subnets have no outbound access until a new instance is `InService`.
+- `per_az`: one Auto Scaling group, with one instance, for each availability zone that has private subnets. Each instance serves the route tables of the private subnets in its own AZ, so the traffic of an AZ stays in that AZ. While an AZ has no `InService` and `Healthy` instance, the Lambda moves the routes of that AZ to the instance of another AZ. When the AZ has a healthy instance again, the routes move back. Each Auto Scaling group replaces its instance with the flow above, but the routes do not wait on the old instance for the new one: when the old instance is `Unhealthy` or `Terminating:Wait`, the routes of its AZ move to a different AZ immediately, and the termination hook releases the old instance. The hook holds an instance only when no AZ has a healthy instance.
+
+`per_az` has these requirements and costs:
+
+- Each AZ that has private subnets must also have a public subnet in `public_subnet_ids`.
+- The private subnets in each AZ must use their own route tables. A route table that is shared with private subnets in a different AZ fails the plan.
+- The module runs one instance for each AZ, and pays for cross-AZ data transfer while an AZ uses the instance of a different AZ.
+- The module must read the subnets during the plan, because the AZs are the keys of the Auto Scaling groups. So the subnets must exist before the plan, and the module block must not have `depends_on`.
+- With `enable_eip = true`, each instance has its own Elastic IP. Traffic can leave from any of them, because of failover, so add all the addresses in the `public_ips` output to third-party allowlists.
+
+A change from `single` to `per_az`, or back, replaces the Auto Scaling groups and the Elastic IPs. During the apply, the private subnets can have no outbound access for some minutes, until the new instances are `InService`. Do the change in a maintenance window. To keep the current Elastic IP, first apply this module version in `single` mode, which moves the Elastic IP in the state to `aws_eip.nat["single"]`. Then move it to the key of one AZ, for example `tofu state mv 'module.nat.aws_eip.nat["single"]' 'module.nat.aws_eip.nat["ap-southeast-2a"]'`, and then apply `per_az`.
 
 ## Instance health
 
@@ -59,6 +77,7 @@ module "nat-instance" {
     ".amazonaws.com",
     "api.sendgrid.com",
   ]
+  availability_mode  = "per_az"
   enable_eip         = true
   name               = "myapp-test-nat"
   private_subnet_ids = ["subnet-10a214dfcd63a97a4", "subnet-c727b18850685046b"]
@@ -149,6 +168,7 @@ The Terraform module has Terratest tests. They validate the [examples](examples/
 | <a name="input_additional_ingress_rules"></a> [additional\_ingress\_rules](#input\_additional\_ingress\_rules) | Additional ingress rules to apply to the security group. | <pre>map(object({<br/>    name = optional(string)<br/><br/>    cidr_ipv4                    = optional(string)<br/>    cidr_ipv6                    = optional(string)<br/>    description                  = optional(string)<br/>    from_port                    = optional(string)<br/>    ip_protocol                  = optional(string, "tcp")<br/>    prefix_list_id               = optional(string)<br/>    referenced_security_group_id = optional(string)<br/>    tags                         = optional(map(string), {})<br/>    to_port                      = optional(string)<br/>  }))</pre> | `{}` | no |
 | <a name="input_allowed_web_domains"></a> [allowed\_web\_domains](#input\_allowed\_web\_domains) | List of allowed domains. | `list(string)` | <pre>[<br/>  ".amazonaws.com",<br/>  ".amazon.com"<br/>]</pre> | no |
 | <a name="input_architectures"></a> [architectures](#input\_architectures) | Lambda function architecture. | `list(string)` | <pre>[<br/>  "arm64"<br/>]</pre> | no |
+| <a name="input_availability_mode"></a> [availability\_mode](#input\_availability\_mode) | "single" runs one NAT instance for all private subnets. "per\_az" runs one NAT instance, in its own Auto Scaling group, for each availability zone that has private subnets. Each instance serves the route tables of its own AZ, and also serves another AZ's route tables while that AZ has no healthy instance. per\_az needs a public subnet in each of those AZs and a separate private route table per AZ, and gives each instance its own EIP when enable\_eip is true. | `string` | `"single"` | no |
 | <a name="input_capacity_rebalance"></a> [capacity\_rebalance](#input\_capacity\_rebalance) | Whether capacity rebalancing is enabled. When true, the ASG proactively replaces spot instances that receive a rebalance recommendation. | `bool` | `null` | no |
 | <a name="input_detailed_monitoring"></a> [detailed\_monitoring](#input\_detailed\_monitoring) | Whether or not to enable detailed monitoring for the EC2 instance. | `bool` | `false` | no |
 | <a name="input_enable_eip"></a> [enable\_eip](#input\_enable\_eip) | Whether or not to enable a consistent elastic IP for the EC2 instances. | `bool` | `false` | no |
@@ -175,7 +195,8 @@ The Terraform module has Terratest tests. They validate the [examples](examples/
 
 | Name | Description |
 | ---- | ----------- |
-| <a name="output_public_ip"></a> [public\_ip](#output\_public\_ip) | Elastic IP of the NAT instance, or null when enable\_eip is false. |
+| <a name="output_public_ip"></a> [public\_ip](#output\_public\_ip) | Elastic IP of the NAT instance, or null when enable\_eip is false or availability\_mode is per\_az. |
+| <a name="output_public_ips"></a> [public\_ips](#output\_public\_ips) | Elastic IPs of the NAT instances, keyed by availability zone in per\_az mode or "single" in single mode. Empty when enable\_eip is false. Traffic can leave from any of them, so third-party allowlists need all of them. |
 ## Providers
 
 | Name | Version |
@@ -234,5 +255,6 @@ The Terraform module has Terratest tests. They validate the [examples](examples/
 | [aws_region.current](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/region) | data source |
 | [aws_route_table.private](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/route_table) | data source |
 | [aws_subnet.private](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/subnet) | data source |
+| [aws_subnet.public](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/subnet) | data source |
 | [aws_vpc.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/vpc) | data source |
 <!-- END_TF_DOCS -->

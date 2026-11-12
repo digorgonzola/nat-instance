@@ -7,6 +7,17 @@ variable "allowed_web_domains" {
   ]
 }
 
+variable "availability_mode" {
+  description = "\"single\" runs one NAT instance for all private subnets. \"per_az\" runs one NAT instance, in its own Auto Scaling group, for each availability zone that has private subnets. Each instance serves the route tables of its own AZ, and also serves another AZ's route tables while that AZ has no healthy instance. per_az needs a public subnet in each of those AZs and a separate private route table per AZ, and gives each instance its own EIP when enable_eip is true."
+  type        = string
+  default     = "single"
+
+  validation {
+    condition     = contains(["single", "per_az"], var.availability_mode)
+    error_message = "availability_mode must be one of: single, per_az."
+  }
+}
+
 variable "architectures" {
   description = "Lambda function architecture."
   type        = list(string)

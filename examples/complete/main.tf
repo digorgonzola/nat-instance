@@ -20,7 +20,10 @@ module "nat_instance" {
   public_subnet_ids  = var.public_subnet_ids
   private_subnet_ids = var.private_subnet_ids
 
-  # A stable public IP that the Lambda moves to each replacement instance.
+  # One instance per AZ with private subnets, each serving its own AZ, with failover between AZs.
+  availability_mode = "per_az"
+
+  # A stable public IP per instance, which the Lambda moves to each replacement instance.
   enable_eip = true
 
   # Spot across several capacity pools, replaced early when AWS signals an interruption risk.

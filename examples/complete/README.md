@@ -2,7 +2,8 @@
 
 The NAT instance with the optional features turned on:
 
-- An Elastic IP, which the Lambda moves to each replacement instance, so the outbound IP does not change.
+- One instance per availability zone that has private subnets, with failover between the zones. Each AZ needs a public subnet and its own private route tables.
+- An Elastic IP for each instance, which the Lambda moves to each replacement instance, so the outbound IPs do not change.
 - Spot instances across several instance types, with capacity rebalancing.
 - Detailed monitoring, extra allowed web domains and tags.
 

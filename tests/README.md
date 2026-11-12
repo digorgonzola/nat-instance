@@ -8,7 +8,7 @@ This directory has two test suites:
 ## Requirements
 
 - Go (the version in `go.mod`)
-- OpenTofu or Terraform. Terratest uses `terraform` if it is on `PATH`, otherwise `tofu`. To choose, set `TERRATEST_TERRAFORM_BINARY=tofu` or `TERRATEST_TERRAFORM_BINARY=terraform`.
+- OpenTofu 1.12 or later, or Terraform. The `*.tftest.hcl` files override data source instances by key, which earlier OpenTofu versions reject. Terratest uses `terraform` if it is on `PATH`, otherwise `tofu`. To choose, set `TERRATEST_TERRAFORM_BINARY=tofu` or `TERRATEST_TERRAFORM_BINARY=terraform`.
 
 ## Unit tests
 

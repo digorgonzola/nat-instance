@@ -41,7 +41,7 @@ def client_error(code):
 def aws():
     with mock.patch.object(main, 'as_client') as as_client, mock.patch.object(main, 'ec2_client') as ec2_client:
         ec2_client.describe_instances.side_effect = lambda InstanceIds: {'Reservations': [{'Instances': [
-            {'InstanceId': i, 'LaunchTime': LAUNCH_TIMES[i]} for i in InstanceIds
+            {'InstanceId': i, 'LaunchTime': LAUNCH_TIMES.get(i, T0)} for i in InstanceIds
         ]}]}
         ec2_client.describe_addresses.return_value = {'Addresses': [{'InstanceId': 'i-old'}]}
         yield mock.Mock(asg=as_client, ec2=ec2_client)
@@ -134,7 +134,7 @@ def test_eip_skipped_when_disabled(aws):
     aws.asg.describe_auto_scaling_groups.return_value = asg_response([('i-new', 'InService', 'Healthy')])
     aws.ec2.describe_route_tables.return_value = route_tables_response('i-old')
 
-    with mock.patch.object(main, 'EIP_ALLOCATION_ID', None):
+    with mock.patch.object(main, 'NAT_GROUPS', {'nat-asg': ''}):
         main.reconcile_nat_target()
 
     aws.ec2.describe_addresses.assert_not_called()
@@ -144,18 +144,176 @@ def test_eip_skipped_when_disabled(aws):
 def test_missing_route_table_tag_raises(aws):
     aws.asg.describe_auto_scaling_groups.return_value = asg_response([('i-old', 'InService', 'Healthy')], '')
 
-    with pytest.raises(main.RouteTableTagMissingError):
+    with pytest.raises(main.ReconcileError) as raised:
         main.reconcile_nat_target()
+
+    assert isinstance(raised.value.failures['nat-asg'], main.RouteTableTagMissingError)
 
     # An empty RouteTableIds filter would describe every route table in the account.
     aws.ec2.describe_route_tables.assert_not_called()
 
 
-def test_missing_asg_raises(aws):
+def test_missing_asg_is_skipped(aws):
     aws.asg.describe_auto_scaling_groups.return_value = {'AutoScalingGroups': []}
 
-    with pytest.raises(main.AsgNotFoundError):
+    main.reconcile_nat_target()
+
+    aws.ec2.describe_route_tables.assert_not_called()
+
+
+PER_AZ_GROUPS = {'nat-a-asg': 'eipalloc-a', 'nat-b-asg': 'eipalloc-b'}
+
+
+@pytest.fixture
+def per_az(aws):
+    """Two groups, each owning one route table and one EIP.
+
+    Set `instances` per group, and `routes` and `eips` to the instance each currently targets.
+    """
+    state = mock.Mock(
+        instances={'nat-a-asg': [], 'nat-b-asg': []},
+        routes={'rtb-a': None, 'rtb-b': None},
+        eips={'eipalloc-a': None, 'eipalloc-b': None},
+    )
+    aws.asg.describe_auto_scaling_groups.side_effect = lambda AutoScalingGroupNames: {'AutoScalingGroups': [
+        {
+            'AutoScalingGroupName': name,
+            'Tags': [{'Key': 'RouteTableIds', 'Value': 'rtb-' + name.split('-')[1]}],
+            'Instances': [
+                {'InstanceId': instance_id, 'LifecycleState': lifecycle_state, 'HealthStatus': health}
+                for instance_id, lifecycle_state, health in state.instances[name]
+            ],
+        }
+        for name in AutoScalingGroupNames
+    ]}
+    aws.ec2.describe_route_tables.side_effect = lambda RouteTableIds: {'RouteTables': [
+        {'RouteTableId': rtb, 'Routes': [
+            {'DestinationCidrBlock': '0.0.0.0/0', 'InstanceId': state.routes[rtb], 'State': 'active'},
+        ]}
+        for rtb in RouteTableIds
+    ]}
+    aws.ec2.describe_addresses.side_effect = lambda AllocationIds: {'Addresses': [
+        {'InstanceId': state.eips[allocation_id]} for allocation_id in AllocationIds
+    ]}
+    with mock.patch.object(main, 'NAT_GROUPS', PER_AZ_GROUPS):
+        yield state
+
+
+def route_targets(aws):
+    return {c.kwargs['RouteTableId']: c.kwargs['InstanceId'] for c in aws.ec2.replace_route.call_args_list}
+
+
+def test_per_az_groups_each_use_their_own_instance(aws, per_az):
+    per_az.instances = {'nat-a-asg': [('i-a', 'InService', 'Healthy')], 'nat-b-asg': [('i-b', 'InService', 'Healthy')]}
+    per_az.routes = {'rtb-a': 'i-old', 'rtb-b': 'i-old'}
+
+    main.reconcile_nat_target()
+
+    assert route_targets(aws) == {'rtb-a': 'i-a', 'rtb-b': 'i-b'}
+    assert {c.kwargs['AllocationId']: c.kwargs['InstanceId'] for c in aws.ec2.associate_address.call_args_list} == {
+        'eipalloc-a': 'i-a', 'eipalloc-b': 'i-b'}
+
+
+def test_group_without_healthy_instance_fails_over_and_releases(aws, per_az):
+    per_az.instances = {
+        'nat-a-asg': [('i-a', 'InService', 'Healthy')],
+        'nat-b-asg': [('i-b', 'Terminating:Wait', 'Healthy')],
+    }
+    per_az.routes = {'rtb-a': 'i-a', 'rtb-b': 'i-b'}
+    per_az.eips = {'eipalloc-a': 'i-a', 'eipalloc-b': 'i-b'}
+
+    main.reconcile_nat_target()
+
+    assert route_targets(aws) == {'rtb-b': 'i-a'}
+    # The failed-over AZ's EIP stays put: its traffic now leaves through the other AZ's EIP.
+    aws.ec2.associate_address.assert_not_called()
+    aws.asg.complete_lifecycle_action.assert_called_once_with(
+        LifecycleHookName='nat-termination-hook', AutoScalingGroupName='nat-b-asg',
+        LifecycleActionResult='CONTINUE', InstanceId='i-b')
+
+
+def test_unhealthy_instance_fails_over_before_its_replacement_is_ready(aws, per_az):
+    per_az.instances = {
+        'nat-a-asg': [('i-a', 'InService', 'Healthy')],
+        'nat-b-asg': [('i-b', 'InService', 'Unhealthy'), ('i-new', 'Pending:Wait', 'Healthy')],
+    }
+    per_az.routes = {'rtb-a': 'i-a', 'rtb-b': 'i-b'}
+    per_az.eips = {'eipalloc-a': 'i-a', 'eipalloc-b': 'i-b'}
+
+    main.reconcile_nat_target()
+
+    assert route_targets(aws) == {'rtb-b': 'i-a'}
+
+
+def test_failed_over_routes_move_back_when_group_recovers(aws, per_az):
+    per_az.instances = {'nat-a-asg': [('i-a', 'InService', 'Healthy')], 'nat-b-asg': [('i-new', 'InService', 'Healthy')]}
+    per_az.routes = {'rtb-a': 'i-a', 'rtb-b': 'i-a'}
+    per_az.eips = {'eipalloc-a': 'i-a', 'eipalloc-b': None}
+
+    main.reconcile_nat_target()
+
+    assert route_targets(aws) == {'rtb-b': 'i-new'}
+    aws.ec2.associate_address.assert_called_once_with(
+        AllocationId='eipalloc-b', InstanceId='i-new', AllowReassociation=True)
+
+
+def test_every_eip_moves_before_any_route(aws, per_az):
+    per_az.instances = {'nat-a-asg': [('i-a', 'InService', 'Healthy')], 'nat-b-asg': [('i-b', 'InService', 'Healthy')]}
+    per_az.routes = {'rtb-a': 'i-old', 'rtb-b': 'i-old'}
+    calls = mock.Mock()
+    aws.ec2.associate_address.side_effect = lambda **kw: calls('eip', kw['InstanceId'])
+    aws.ec2.replace_route.side_effect = lambda **kw: calls('route', kw['InstanceId'])
+
+    main.reconcile_nat_target()
+
+    assert [c.args[0] for c in calls.call_args_list] == ['eip', 'eip', 'route', 'route']
+
+
+def test_no_healthy_instance_in_any_group_leaves_routes(aws, per_az):
+    per_az.instances = {
+        'nat-a-asg': [('i-a', 'Terminating:Wait', 'Healthy')],
+        'nat-b-asg': [('i-b', 'InService', 'Unhealthy')],
+    }
+
+    main.reconcile_nat_target()
+
+    aws.ec2.describe_route_tables.assert_not_called()
+    aws.asg.complete_lifecycle_action.assert_not_called()
+
+
+def test_group_not_created_yet_does_not_block_the_others(aws):
+    aws.asg.describe_auto_scaling_groups.return_value = asg_response(
+        [('i-old', 'Terminating:Wait', 'Healthy'), ('i-new', 'InService', 'Healthy')], 'rtb-a')
+    aws.ec2.describe_route_tables.return_value = route_tables_response('i-old')
+
+    with mock.patch.object(main, 'NAT_GROUPS', {'nat-asg': '', 'nat-b-asg': ''}):
         main.reconcile_nat_target()
+
+    aws.ec2.replace_route.assert_called_once_with(
+        DestinationCidrBlock='0.0.0.0/0', RouteTableId='rtb-a', InstanceId='i-new')
+    aws.asg.complete_lifecycle_action.assert_called_once()
+
+
+def test_failed_group_does_not_block_the_others_and_is_raised(aws, per_az):
+    per_az.instances = {
+        'nat-a-asg': [('i-a-old', 'Terminating:Wait', 'Healthy'), ('i-a', 'InService', 'Healthy')],
+        'nat-b-asg': [('i-b-old', 'Terminating:Wait', 'Healthy'), ('i-b', 'InService', 'Healthy')],
+    }
+    per_az.routes = {'rtb-a': 'i-a-old', 'rtb-b': 'i-b-old'}
+
+    def replace_route(**kw):
+        if kw['RouteTableId'] == 'rtb-a':
+            raise client_error('Throttling')
+    aws.ec2.replace_route.side_effect = replace_route
+
+    with pytest.raises(main.ReconcileError) as raised:
+        main.reconcile_nat_target()
+
+    assert list(raised.value.failures) == ['nat-a-asg']
+    # Group a's old instance still carries its routes, so only group b's is released.
+    aws.asg.complete_lifecycle_action.assert_called_once_with(
+        LifecycleHookName='nat-termination-hook', AutoScalingGroupName='nat-b-asg',
+        LifecycleActionResult='CONTINUE', InstanceId='i-b-old')
 
 
 def test_already_completed_lifecycle_action_is_tolerated(aws):
@@ -173,7 +331,7 @@ def test_other_lifecycle_action_errors_propagate(aws):
     aws.ec2.describe_route_tables.return_value = route_tables_response('i-new')
     aws.asg.complete_lifecycle_action.side_effect = client_error('Throttling')
 
-    with pytest.raises(ClientError):
+    with pytest.raises(main.ReconcileError):
         main.reconcile_nat_target()
 
 
@@ -182,7 +340,7 @@ def test_scheduled_event_failure_propagates_for_retry(aws):
     aws.ec2.describe_route_tables.return_value = route_tables_response('i-old')
     aws.ec2.replace_route.side_effect = client_error('Throttling')
 
-    with pytest.raises(ClientError):
+    with pytest.raises(main.ReconcileError):
         main.lambda_handler({'source': 'aws.events', 'detail-type': 'Scheduled Event'}, None)
 
 

@@ -8,7 +8,6 @@ os.environ.update(
     AWS_ACCESS_KEY_ID='testing',
     AWS_SECRET_ACCESS_KEY='testing',
     AWS_SESSION_TOKEN='testing',
-    ASG_NAME='nat-asg',
     TERMINATION_HOOK_NAME='nat-termination-hook',
-    EIP_ALLOCATION_ID='eipalloc-1',
+    NAT_GROUPS='{"nat-asg": "eipalloc-1"}',
 )
