@@ -314,7 +314,9 @@ resource "aws_autoscaling_group" "nat" {
       on_demand_base_capacity                  = coalesce(var.on_demand_base_capacity, var.enable_spot_instance ? 0 : 1)
       on_demand_percentage_above_base_capacity = coalesce(var.on_demand_percentage_above_base_capacity, var.enable_spot_instance ? 0 : 100)
       spot_allocation_strategy                 = var.enable_spot_instance ? var.spot_allocation_strategy : null
-      spot_instance_pools                      = var.spot_instance_pools
+      # AWS applies lowest-price with 2 pools when no pools value is sent. The provider never sends 0,
+      # so a 0 in config leaves a permanent 2 -> 0 diff; send null instead to keep the AWS value.
+      spot_instance_pools = var.enable_spot_instance && var.spot_allocation_strategy == "lowest-price" && var.spot_instance_pools != 0 ? var.spot_instance_pools : null
     }
 
     launch_template {

@@ -103,9 +103,9 @@ variable "spot_allocation_strategy" {
 }
 
 variable "spot_instance_pools" {
-  description = "Number of spot instance pools across which to allocate instances. Only valid when spot_allocation_strategy is 'lowest-price'. Set to 0 for other strategies."
+  description = "Number of spot instance pools across which to allocate instances. Used only when enable_spot_instance is true and spot_allocation_strategy is 'lowest-price'; ignored otherwise. When null or 0, AWS uses its default of 2."
   type        = number
-  default     = 0
+  default     = null
 }
 
 variable "capacity_rebalance" {

@@ -161,7 +161,7 @@ The Terraform module has Terratest tests. They validate the [examples](examples/
 | <a name="input_private_subnet_ids"></a> [private\_subnet\_ids](#input\_private\_subnet\_ids) | List of private subnet ID's in the VPC. | `list(string)` | n/a | yes |
 | <a name="input_public_subnet_ids"></a> [public\_subnet\_ids](#input\_public\_subnet\_ids) | List of public subnet ID's to deploy the ASG to. | `list(string)` | n/a | yes |
 | <a name="input_spot_allocation_strategy"></a> [spot\_allocation\_strategy](#input\_spot\_allocation\_strategy) | Strategy for allocating spot instances. Valid values: 'capacity-optimized', 'capacity-optimized-prioritized', 'lowest-price', 'price-capacity-optimized'. Note: AWS recommends 'price-capacity-optimized' over 'lowest-price'. | `string` | `"price-capacity-optimized"` | no |
-| <a name="input_spot_instance_pools"></a> [spot\_instance\_pools](#input\_spot\_instance\_pools) | Number of spot instance pools across which to allocate instances. Only valid when spot\_allocation\_strategy is 'lowest-price'. Set to 0 for other strategies. | `number` | `0` | no |
+| <a name="input_spot_instance_pools"></a> [spot\_instance\_pools](#input\_spot\_instance\_pools) | Number of spot instance pools across which to allocate instances. Used only when enable\_spot\_instance is true and spot\_allocation\_strategy is 'lowest-price'; ignored otherwise. When null or 0, AWS uses its default of 2. | `number` | `null` | no |
 | <a name="input_tags"></a> [tags](#input\_tags) | Tags to apply to the resources. | `map(string)` | `{}` | no |
 | <a name="input_vpc_id"></a> [vpc\_id](#input\_vpc\_id) | The ID of the VPC to deploy the NAT instance/squid proxy to. | `string` | n/a | yes |
 ## Modules

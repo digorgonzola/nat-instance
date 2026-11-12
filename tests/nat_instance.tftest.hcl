@@ -182,3 +182,49 @@ run "invalid_spot_allocation_strategy_fails" {
 
   expect_failures = [var.spot_allocation_strategy]
 }
+
+run "spot_instance_pools_sent_for_lowest_price" {
+  command = plan
+
+  variables {
+    enable_spot_instance     = true
+    spot_allocation_strategy = "lowest-price"
+    spot_instance_pools      = 3
+  }
+
+  assert {
+    condition     = aws_autoscaling_group.nat.mixed_instances_policy[0].instances_distribution[0].spot_instance_pools == 3
+    error_message = "spot_instance_pools must be sent when the strategy is lowest-price."
+  }
+}
+
+# The provider skips 0 and the ASG then reports the AWS default of 2, so a pools value must not reach
+# AWS unless spot uses lowest-price. Mock applies fill the unset computed attribute with 0.
+run "spot_instance_pools_not_sent_when_spot_disabled" {
+  command = apply
+
+  variables {
+    spot_allocation_strategy = "lowest-price"
+    spot_instance_pools      = 3
+  }
+
+  assert {
+    condition     = aws_autoscaling_group.nat.mixed_instances_policy[0].instances_distribution[0].spot_instance_pools != 3
+    error_message = "spot_instance_pools must be null when spot is disabled."
+  }
+}
+
+run "spot_instance_pools_not_sent_without_lowest_price" {
+  command = apply
+
+  variables {
+    enable_spot_instance     = true
+    spot_allocation_strategy = "price-capacity-optimized"
+    spot_instance_pools      = 3
+  }
+
+  assert {
+    condition     = aws_autoscaling_group.nat.mixed_instances_policy[0].instances_distribution[0].spot_instance_pools != 3
+    error_message = "spot_instance_pools must be null unless the strategy is lowest-price."
+  }
+}
