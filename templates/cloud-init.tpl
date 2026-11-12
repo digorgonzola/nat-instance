@@ -25,9 +25,32 @@ write_files:
   - path: /root/startup.sh
     permissions: '0755'
     content: |
-      #!/bin/bash -xe
+      #!/bin/bash -xeE
       # Redirect the user-data output to the console logs
       exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
+
+      region=${aws_region}
+      TOKEN=$(curl -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+      instanceid=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" -s http://169.254.169.254/latest/meta-data/instance-id)
+      asg_name=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" -s http://169.254.169.254/latest/meta-data/tags/instance/aws:autoscaling:groupName)
+
+      complete_launch() {
+        aws autoscaling complete-lifecycle-action \
+          --lifecycle-hook-name "${lifecycle_hook_name}" \
+          --auto-scaling-group-name "$asg_name" \
+          --lifecycle-action-result "$1" \
+          --instance-id "$instanceid" \
+          --region "$region"
+      }
+
+      # Fail the launch straight away instead of waiting for the hook timeout. The previous
+      # instance keeps the routes because traffic only moves to an InService instance.
+      abandon_launch() {
+        trap - ERR
+        complete_launch ABANDON
+        exit 1
+      }
+      trap abandon_launch ERR
 
       # Apply the latest security patches
       yum update -y --security
@@ -37,33 +60,7 @@ write_files:
       sysctl -p
 
       # Disable source / destination check. It cannot be disabled from the launch configuration
-      region=${aws_region}
-      TOKEN=$(curl -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
-      instanceid=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" -s http://169.254.169.254/latest/meta-data/instance-id)
       aws ec2 modify-instance-attribute --no-source-dest-check --instance-id $instanceid --region $region
-
-      # Associate the Elastic IP with this instance if an allocation ID is provided
-      if [ -n "${eip_allocation_id}" ]; then
-        interface_id=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" -s \
-          http://169.254.169.254/latest/meta-data/network/interfaces/macs/ | head -n1)
-
-        eni_id=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" -s \
-          http://169.254.169.254/latest/meta-data/network/interfaces/macs/$${interface_id}interface-id)
-
-        private_ip=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" -s \
-          http://169.254.169.254/latest/meta-data/network/interfaces/macs/$${interface_id}local-ipv4s)
-
-          echo "EIP: ${eip_allocation_id}"
-          echo "ENI: $eni_id"
-          echo "Private IP: $private_ip"
-
-        aws ec2 associate-address \
-          --allocation-id "${eip_allocation_id}" \
-          --network-interface-id "$eni_id" \
-          --private-ip-address "$private_ip" \
-          --allow-reassociation \
-          --region "$region"
-      fi
 
       #Install iptables and cron
       yum install cronie -y
@@ -173,7 +170,7 @@ write_files:
 
       if [ $retry -eq $max_retries ]; then
           echo "Failed to install CloudWatch Agent after $max_retries attempts"
-          exit 1
+          abandon_launch
       fi
 
       cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json << 'EOF'
@@ -229,16 +226,18 @@ write_files:
       EOF
       /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json -s
 
-      # Get the Auto Scaling Group name from instance metadata
-      asg_name=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" -s http://169.254.169.254/latest/meta-data/tags/instance/aws:autoscaling:groupName)
+      # Self-test before going InService: the Lambda moves routes to this instance as soon
+      # as it is InService, so any failure here must abandon the launch instead.
+      systemctl is-active --quiet squid
+      /usr/sbin/squid -k check
+      [ "$(sysctl -n net.ipv4.ip_forward)" = "1" ]
+      iptables -t nat -C POSTROUTING -o $INTERNET_INTERFACE -j MASQUERADE
+      for port in 3128 3129 3130; do
+        ss -ltn "sport = :$port" | grep -q LISTEN
+      done
 
-      # Complete the lifecycle action
-      aws autoscaling complete-lifecycle-action \
-        --lifecycle-hook-name "${lifecycle_hook_name}" \
-        --auto-scaling-group-name "$asg_name" \
-        --lifecycle-action-result CONTINUE \
-        --instance-id "$instanceid" \
-        --region $region
+      trap - ERR
+      complete_launch CONTINUE
 
 runcmd:
   - /root/startup.sh

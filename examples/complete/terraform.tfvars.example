@@ -1,0 +1,6 @@
+# Copy this file to terraform.tfvars and fill in your values.
+# The VPC and subnets must already exist: the module reads them with data sources.
+
+vpc_id             = "vpc-0123456789abcdef0"
+public_subnet_ids  = ["subnet-0123456789abcdef0", "subnet-0123456789abcdef1"]
+private_subnet_ids = ["subnet-0123456789abcdef2", "subnet-0123456789abcdef3"]

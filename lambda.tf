@@ -79,6 +79,21 @@ data "aws_iam_policy_document" "lambda" {
     ]
   }
 
+  dynamic "statement" {
+    for_each = var.enable_eip ? ["true"] : []
+    content {
+      sid = "AssociateEIP"
+      actions = [
+        "ec2:AssociateAddress",
+      ]
+      resources = [
+        aws_eip.nat[0].arn,
+        "arn:aws:ec2:${data.aws_region.current.region}:${data.aws_caller_identity.this.account_id}:instance/*",
+        "arn:aws:ec2:${data.aws_region.current.region}:${data.aws_caller_identity.this.account_id}:network-interface/*",
+      ]
+    }
+  }
+
   statement {
     sid = "AllowDescribeCloudwatchAlarm"
     actions = [
@@ -129,6 +144,27 @@ resource "aws_lambda_permission" "lifecycle_sns" {
   source_arn    = aws_sns_topic.asg_lifecycle.arn
 }
 
+resource "aws_lambda_permission" "reconcile_schedule" {
+  statement_id  = "AllowExecutionFromReconcileSchedule"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.nat.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.reconcile.arn
+}
+
+# Safety net for missed or failed lifecycle notifications: repairs blackholed routes and
+# releases instances held by the termination hook.
+resource "aws_cloudwatch_event_rule" "reconcile" {
+  name                = "${local.name}-reconcile"
+  description         = "Periodically reconcile NAT instance routes and EIP."
+  schedule_expression = "rate(1 minute)"
+}
+
+resource "aws_cloudwatch_event_target" "reconcile" {
+  rule = aws_cloudwatch_event_rule.reconcile.name
+  arn  = aws_lambda_function.nat.arn
+}
+
 # Log group for Lambda
 resource "aws_cloudwatch_log_group" "lambda" {
   name              = "/aws/lambda/${local.name}-lambda"
@@ -157,6 +193,14 @@ resource "aws_lambda_function" "nat" {
 
   filename         = data.archive_file.lambda_source_code.output_path
   source_code_hash = data.archive_file.lambda_source_code.output_base64sha256
+
+  environment {
+    variables = {
+      ASG_NAME              = local.asg_name
+      TERMINATION_HOOK_NAME = local.termination_hook_name
+      EIP_ALLOCATION_ID     = var.enable_eip ? aws_eip.nat[0].id : ""
+    }
+  }
 
   dead_letter_config {
     target_arn = aws_sqs_queue.dlq.arn

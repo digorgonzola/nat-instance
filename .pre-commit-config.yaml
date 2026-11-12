@@ -17,6 +17,8 @@ repos:
     hooks:
       - id: terraform_fmt
       - id: terragrunt_fmt
+        # Terraform test files are formatted by terraform_fmt.
+        exclude: \.tftest\.hcl$
       - id: terraform_trivy
         args:
           - --hook-config=--parallelism-ci-cpu-cores=1

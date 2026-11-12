@@ -1,6 +1,8 @@
 locals {
-  name                = var.name
-  lifecycle_hook_name = "${local.name}-hook"
+  name                  = var.name
+  asg_name              = "${local.name}-asg"
+  lifecycle_hook_name   = "${local.name}-hook"
+  termination_hook_name = "${local.name}-termination-hook"
   default_egress_rules = {
     egress_http = {
       cidr_ipv4   = "0.0.0.0/0"
@@ -29,7 +31,6 @@ locals {
   userdata = templatefile("${path.module}/templates/cloud-init.tpl", {
     architecture        = local.architecture
     aws_region          = data.aws_region.current.region
-    eip_allocation_id   = var.enable_eip ? aws_eip.nat[0].id : ""
     lifecycle_hook_name = local.lifecycle_hook_name
     s3_bucket           = module.config_bucket.s3_bucket_id
     vpc_cidr_block      = data.aws_vpc.this.cidr_block
@@ -162,21 +163,6 @@ data "aws_iam_policy_document" "instance" {
     ]
   }
 
-  dynamic "statement" {
-    for_each = var.enable_eip ? ["true"] : []
-    content {
-      sid = "DescribeEIP"
-      actions = [
-        "ec2:AssociateAddress",
-        "ec2:DescribeAddresses",
-      ]
-      resources = [
-        "arn:aws:ec2:${data.aws_region.current.region}:${data.aws_caller_identity.this.account_id}:elastic-ip/*",
-        "arn:aws:ec2:${data.aws_region.current.region}:${data.aws_caller_identity.this.account_id}:network-interface/*",
-      ]
-    }
-  }
-
   statement {
     sid = "AsgLifecycle"
     actions = [
@@ -285,7 +271,7 @@ resource "aws_eip" "nat" {
 }
 
 resource "aws_autoscaling_group" "nat" {
-  name                      = "${local.name}-asg"
+  name                      = local.asg_name
   max_size                  = 1
   min_size                  = 1
   health_check_grace_period = 300
@@ -369,6 +355,23 @@ resource "aws_autoscaling_group" "nat" {
     aws_lambda_function.nat,
     aws_iam_role_policy_attachment.cloudwatch,
     aws_iam_role_policy_attachment.custom,
+    aws_iam_role_policy.asg_lifecycle,
+  ]
+}
+
+# Holds a terminating instance until the Lambda has moved the routes and EIP to a healthy
+# replacement. Managed outside initial_lifecycle_hook so it is also added to existing ASGs.
+resource "aws_autoscaling_lifecycle_hook" "terminating" {
+  name                    = local.termination_hook_name
+  autoscaling_group_name  = aws_autoscaling_group.nat.name
+  lifecycle_transition    = "autoscaling:EC2_INSTANCE_TERMINATING"
+  heartbeat_timeout       = 600
+  default_result          = "CONTINUE"
+  notification_target_arn = aws_sns_topic.asg_lifecycle.arn
+  role_arn                = aws_iam_role.asg_lifecycle.arn
+
+  depends_on = [
+    aws_sns_topic_subscription.lambda_sub,
     aws_iam_role_policy.asg_lifecycle,
   ]
 }

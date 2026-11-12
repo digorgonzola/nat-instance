@@ -13,6 +13,19 @@ The module creates:
 
 The running instances can be accessed via SSM for debugging purposes.
 
+## Instance replacement and failover
+
+Instance refreshes, capacity rebalancing and health replacements launch the new instance before the old instance terminates. The private routes and the Elastic IP move to the new instance only after it is ready:
+
+1. The new instance starts in `Pending:Wait`. The routes stay on the old instance while the new instance bootstraps.
+2. The bootstrap script does a self-test (squid running, IP forwarding on, NAT rule present, proxy ports listening). If the self-test passes, the script completes the launch lifecycle action with `CONTINUE` and the instance goes `InService`. If a step fails, the script completes the action with `ABANDON` and the old instance continues to serve traffic.
+3. The Lambda function moves the Elastic IP (when `enable_eip = true`), then the default route in each private route table, to the newest `InService` and `Healthy` instance.
+4. A termination lifecycle hook holds the old instance in `Terminating:Wait` until the Lambda has moved the traffic off it. If there is no healthy replacement yet, the hook holds the old instance until one is available, or until the 10-minute heartbeat timeout.
+
+The Lambda runs on each lifecycle hook notification and every minute on an EventBridge schedule. The schedule repairs blackholed routes and releases held instances if a notification is lost or a Lambda invocation fails.
+
+Existing TCP connections through the old instance are dropped at cutover because connection-tracking state is not shared between instances. New connections use the new instance.
+
 ## Usage with Terraform
 
 ```hcl
@@ -93,6 +106,20 @@ When `enable_spot_instance = true`, `capacity_rebalance` is enabled by default. 
 
 The `spot_allocation_strategy` defaults to `price-capacity-optimized`, which AWS recommends for most workloads. This strategy selects spot pools that are both low-cost and have high available capacity, reducing the likelihood of interruption. The `lowest-price` strategy is supported but not recommended, as it cannot be used with capacity rebalancing.
 
+## Development
+
+The `tests/` directory has two test suites. Neither needs AWS credentials. The `Tests` workflow runs both on each pull request to `main`.
+
+The Lambda function in `src/main.py` has unit tests that use mocked AWS clients. To run them locally (Python 3.13, the same as the Lambda runtime):
+
+```sh
+python3 -m venv .venv
+.venv/bin/pip install -r requirements-dev.txt
+.venv/bin/pytest
+```
+
+The Terraform module has Terratest tests. They validate the [examples](examples/) and run `tests/*.tftest.hcl` with mocked providers. See [tests/README.md](tests/README.md).
+
 ## Notes
 
 - Instance AMI will not be updated automatically (ignored in lifecycle)
@@ -134,7 +161,7 @@ The `spot_allocation_strategy` defaults to `price-capacity-optimized`, which AWS
 
 | Name | Description |
 | ---- | ----------- |
-| <a name="output_public_ip"></a> [public\_ip](#output\_public\_ip) | n/a |
+| <a name="output_public_ip"></a> [public\_ip](#output\_public\_ip) | Elastic IP of the NAT instance, or null when enable\_eip is false. |
 ## Providers
 
 | Name | Version |
@@ -154,6 +181,9 @@ The `spot_allocation_strategy` defaults to `price-capacity-optimized`, which AWS
 | Name | Type |
 | ---- | ---- |
 | [aws_autoscaling_group.nat](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/autoscaling_group) | resource |
+| [aws_autoscaling_lifecycle_hook.terminating](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/autoscaling_lifecycle_hook) | resource |
+| [aws_cloudwatch_event_rule.reconcile](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_event_rule) | resource |
+| [aws_cloudwatch_event_target.reconcile](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_event_target) | resource |
 | [aws_cloudwatch_log_group.access](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_log_group) | resource |
 | [aws_cloudwatch_log_group.cache](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_log_group) | resource |
 | [aws_cloudwatch_log_group.iptables](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_log_group) | resource |
@@ -174,6 +204,7 @@ The `spot_allocation_strategy` defaults to `price-capacity-optimized`, which AWS
 | [aws_lambda_function.nat](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lambda_function) | resource |
 | [aws_lambda_permission.alarm_sns](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lambda_permission) | resource |
 | [aws_lambda_permission.lifecycle_sns](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lambda_permission) | resource |
+| [aws_lambda_permission.reconcile_schedule](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lambda_permission) | resource |
 | [aws_lambda_permission.s3_trigger](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lambda_permission) | resource |
 | [aws_launch_template.nat](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/launch_template) | resource |
 | [aws_s3_bucket_notification.bucket_notification](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket_notification) | resource |

@@ -67,3 +67,10 @@ share/python-wheels/
 MANIFEST
 .direnv
 .envrc
+
+# Python bytecode
+__pycache__/
+
+# Go test binaries and coverage output
+tests/*.test
+tests/*.out

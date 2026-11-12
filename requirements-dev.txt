@@ -1,0 +1,4 @@
+# Test dependencies for the Lambda function in src/. The Lambda runtime provides boto3,
+# so nothing here is packaged with the function.
+boto3==1.44.1
+pytest==9.2.0
